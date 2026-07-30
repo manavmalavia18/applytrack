@@ -1,18 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.1.0",
-  "description": "One-click job application tracker with revisit detection",
+  "version": "0.5.30",
+  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
-    "https://*.linkedin.com/*",
-    "https://boards.greenhouse.io/*",
-    "https://*.greenhouse.io/*",
-    "https://jobs.lever.co/*",
-    "https://*.lever.co/*",
-    "https://*.myworkdayjobs.com/*",
-    "http://localhost:3000/*",
-    "https://*.vercel.app/*"
+    "https://*/*",
+    "http://localhost:3000/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -24,13 +18,33 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.linkedin.com/*",
+        "https://job-boards.greenhouse.io/*",
         "https://boards.greenhouse.io/*",
         "https://*.greenhouse.io/*",
-        "https://jobs.lever.co/*",
+        "https://*.ashbyhq.com/*",
+        "https://jobs.ashbyhq.com/*",
         "https://*.lever.co/*",
-        "https://*.myworkdayjobs.com/*"
+        "https://jobs.lever.co/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://*.icims.com/*",
+        "https://*.entertimeonline.com/*",
+        "https://*.oraclecloud.com/*",
+        "https://*.applytojob.com/*",
+        "https://*.successfactors.com/*",
+        "https://*.successfactors.eu/*",
+        "https://*.paylocity.com/*",
+        "https://*.ultipro.com/*",
+        "https://*.ukg.com/*",
+        "https://*.phenom.com/*",
+        "https://*.phenompeople.com/*",
+        "https://*.phenompro.com/*",
+        "https://*.salesforce-sites.com/*",
+        "https://*.force.com/*",
+        "https://www.linkedin.com/jobs/*",
+        "https://linkedin.com/jobs/*",
+        "https://*/*"
       ],
+      "all_frames": true,
       "js": ["parsers.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

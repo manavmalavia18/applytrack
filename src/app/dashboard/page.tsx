@@ -4,6 +4,7 @@ import { PipelineBoard, type AppRow } from "@/components/PipelineBoard";
 import { getDb } from "@/db";
 import { applications } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
+import { cleanRoleTitle } from "@/lib/job-key";
 
 export default async function DashboardPage() {
   const user = await getSessionUser();
@@ -16,10 +17,22 @@ export default async function DashboardPage() {
     .where(eq(applications.userId, user.id))
     .orderBy(desc(applications.updatedAt));
 
+  // Persist cleaned titles (confirmation chrome, etc.)
+  for (const r of rows) {
+    const role = cleanRoleTitle(r.role);
+    if (role && role !== r.role) {
+      await db
+        .update(applications)
+        .set({ role, updatedAt: new Date() })
+        .where(eq(applications.id, r.id));
+      r.role = role;
+    }
+  }
+
   const initial: AppRow[] = rows.map((r) => ({
     id: r.id,
     company: r.company,
-    role: r.role,
+    role: cleanRoleTitle(r.role) || r.role,
     url: r.url,
     status: r.status,
     source: r.source,

@@ -29,7 +29,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const p = message.payload || {};
       const qs = new URLSearchParams();
       if (p.jobKey) qs.set("jobKey", p.jobKey);
-      else if (p.url) qs.set("url", p.url);
+      if (p.url) qs.set("url", p.url);
+      else if (!p.jobKey) {
+        sendResponse({ ok: false, error: "missing_url" });
+        return;
+      }
       const result = await api(`/api/applications/lookup?${qs}`);
       sendResponse(result);
       return;
@@ -42,11 +46,32 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(result);
       return;
     }
+    if (message.type === "DRAFT_ANSWERS") {
+      const result = await api("/api/draft-answers", {
+        method: "POST",
+        body: message.payload,
+      });
+      sendResponse(result);
+      return;
+    }
+    if (message.type === "GET_PROFILE") {
+      const result = await api("/api/profile");
+      sendResponse(result);
+      return;
+    }
     sendResponse({ ok: false, error: "unknown" });
   })();
   return true;
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("ApplyTrack installed");
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const { refreshTabId } = await chrome.storage.session.get("refreshTabId");
+    if (refreshTabId) {
+      await chrome.storage.session.remove("refreshTabId");
+      await chrome.tabs.reload(refreshTabId);
+    }
+  } catch (err) {
+    console.warn("ApplyTrack post-reload tab refresh skipped", err);
+  }
 });

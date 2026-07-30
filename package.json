@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "ai": "^7.0.42",
     "bcryptjs": "^3.0.3",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",

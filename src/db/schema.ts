@@ -21,6 +21,10 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: varchar("email", { length: 255 }).notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  displayName: varchar("display_name", { length: 120 }).notNull().default(""),
+  headline: varchar("headline", { length: 255 }).notNull().default(""),
+  resumeText: text("resume_text").notNull().default(""),
+  writingStyle: text("writing_style").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

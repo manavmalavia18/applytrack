@@ -39,6 +39,9 @@
         font-weight: 600;
         cursor: pointer;
       }
+      button.secondary {
+        background: #0f172a;
+      }
       .muted {
         font-size: 11px;
         color: #5b6b63;
@@ -61,8 +64,11 @@
       <input id="apiToken" type="password" placeholder="atk_…" />
     </label>
     <button id="save" type="button">Save settings</button>
+    <button id="show" type="button">Show on this tab</button>
     <button id="mark" type="button">Mark this tab Applied</button>
+    <button id="reload" type="button" class="secondary">Reload extension + this tab</button>
     <div id="status" class="muted"></div>
+    <p class="muted">Look for a teal <b>ApplyTrack</b> pill at the <b>bottom-left</b>. If missing, click <b>Show on this tab</b>.</p>
     <p class="muted">Generate a token in Dashboard → Extension token.</p>
     <script src="popup.js"></script>
   </body>
