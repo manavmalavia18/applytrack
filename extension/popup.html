@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ApplyTrack</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        width: 320px;
+        margin: 0;
+        padding: 14px;
+        color: #14201b;
+        background: #f4f7f5;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 10px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      input {
+        padding: 8px;
+        border: 1px solid #cbd5d1;
+        border-radius: 6px;
+      }
+      button {
+        width: 100%;
+        margin-top: 6px;
+        padding: 8px;
+        border: none;
+        border-radius: 6px;
+        background: #0f766e;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .muted {
+        font-size: 11px;
+        color: #5b6b63;
+        margin-top: 8px;
+      }
+      #status {
+        font-size: 12px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ApplyTrack</h1>
+    <label>
+      API base URL
+      <input id="apiBase" placeholder="https://your-app.vercel.app" />
+    </label>
+    <label>
+      API token
+      <input id="apiToken" type="password" placeholder="atk_…" />
+    </label>
+    <button id="save" type="button">Save settings</button>
+    <button id="mark" type="button">Mark this tab Applied</button>
+    <div id="status" class="muted"></div>
+    <p class="muted">Generate a token in Dashboard → Extension token.</p>
+    <script src="popup.js"></script>
+  </body>
+</html>
