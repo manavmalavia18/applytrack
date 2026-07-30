@@ -780,58 +780,94 @@ function parseLever() {
       .trim();
   }
 
+  function sameAs(a, b) {
+    return (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+  }
+
+  function imgAlt(sel) {
+    const el = document.querySelector(sel);
+    if (!el) return "";
+    return (el.getAttribute("alt") || el.alt || "").trim().replace(/\s+/g, " ");
+  }
+
+  /** Reject host labels, empty, or anything equal to the job title. */
+  function badCompany(c, roleName) {
+    const t = (c || "").trim();
+    if (!t || isWeakCompany(t, "lever")) return true;
+    if (roleName && sameAs(t, roleName)) return true;
+    return false;
+  }
+
   const role = pick(
     textOf(document.querySelector(".posting-headline h2")),
     textOf(document.querySelector(".posting-headline h1")),
     textOf(document.querySelector("h2")),
     textOf(document.querySelector("h1")),
-    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+    // Lever titles are "Company - Role" — role is the right-hand segment
+    document.title
+      .split(/\s*[|–—]\s*|\s+-\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(-1)[0],
   );
 
-  // Prefer page brand (logo / site name), then title-cased path slug — never host label
+  // Prefer: logo/alt → og:site_name → visible header → title company → path slug
+  // Never hostname "jobs", never company === role.
   let company = "";
-  const logo = textOf(
-    document.querySelector(
-      ".main-header-logo img[alt], header img[alt], .logo img[alt], a[class*='logo'] img[alt]",
-    ),
+  const logo = imgAlt(
+    ".main-header-logo img[alt], header img[alt], .logo img[alt], a[class*='logo'] img[alt]",
   );
   if (
     logo &&
     logo.length > 1 &&
-    logo.length < 60 &&
+    logo.length < 80 &&
     !/^logo$/i.test(logo) &&
-    !/lever|image/i.test(logo) &&
-    !isWeakCompany(logo, "lever")
+    !/^lever(\s+logo)?$/i.test(logo) &&
+    !/image/i.test(logo)
   ) {
-    company = scrubCompany(logo, "lever");
+    const scrubbed = scrubCompany(logo, "lever");
+    if (!badCompany(scrubbed, role)) company = scrubbed;
   }
 
   const og = document
     .querySelector('meta[property="og:site_name"]')
     ?.getAttribute("content")
     ?.trim();
-  if ((!company || isWeakCompany(company, "lever")) && og && !isWeakCompany(og, "lever")) {
-    company = scrubCompany(og, "lever");
+  if (badCompany(company, role) && og) {
+    const scrubbed = scrubCompany(og, "lever");
+    if (!badCompany(scrubbed, role)) company = scrubbed;
   }
 
-  // "Software Engineer - Atom Computing" style titles
-  if (!company || isWeakCompany(company, "lever")) {
-    const fromTitle = document.title.match(/\s[-–—]\s+(.+)$/)?.[1]?.trim();
-    if (
-      fromTitle &&
-      fromTitle.length < 60 &&
-      !isWeakRole(fromTitle, "lever") &&
-      !isWeakCompany(fromTitle, "lever")
-    ) {
+  if (badCompany(company, role)) {
+    const header = pick(
+      textOf(document.querySelector(".main-header-company")),
+      textOf(document.querySelector(".main-header-content .main-header-company span")),
+      textOf(document.querySelector("[class*='main-header-company']")),
+    );
+    if (header && header.length < 60) {
+      const scrubbed = scrubCompany(header, "lever");
+      if (!badCompany(scrubbed, role)) company = scrubbed;
+    }
+  }
+
+  // Lever document.title is "Company - Role" (left = employer)
+  if (badCompany(company, role)) {
+    const titleBits = document.title
+      .split(/\s*[|–—]\s*|\s+-\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const fromTitle = titleBits[0] || "";
+    if (fromTitle && fromTitle.length < 60 && !badCompany(fromTitle, role)) {
       company = scrubCompany(fromTitle, "lever");
     }
   }
 
-  if (!company || isWeakCompany(company, "lever")) {
+  if (badCompany(company, role)) {
     company = scrubCompany(titleCaseSlug(companySlug), "lever");
   }
 
   company = scrubCompany(company, "lever") || company;
+  if (badCompany(company, role)) company = "";
 
   const listingUrl = location.href
     .split("?")[0]

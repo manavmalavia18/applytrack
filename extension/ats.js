@@ -250,7 +250,11 @@ const ApplyTrackATS = {
 
   lever: {
     scrubCompany(t) {
-      const c = (t || "").trim().replace(/\s+/g, " ");
+      let c = (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/\s+logo$/i, "")
+        .trim();
       const compact = c.replace(/\s/g, "");
       if (/^atomcomputing$/i.test(compact) || /^atom\s*computing$/i.test(c)) {
         return "Atom Computing";
