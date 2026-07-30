@@ -1,4 +1,7 @@
-/** Site parsers — best-effort DOM extraction. */
+/** Site parsers — best-effort DOM extraction.
+ * Per-ATS quirks (title/company scrub, weak locks) live in ats.js — do not add
+ * source-specific hacks to shared remember/merge helpers below.
+ */
 function textOf(el) {
   return ((el && (el.innerText || el.textContent)) || "").trim().replace(/\s+/g, " ");
 }
@@ -421,7 +424,7 @@ function parseIcims() {
     for (const raw of cands) {
       const t = (raw || "").trim().replace(/\s+/g, " ");
       if (!t || t.length < 5 || bad.test(t)) continue;
-      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      if (isWeakRole(t, "icims")) continue;
       // Prefer titles that look like roles, not form section headers
       if (/^(enter|please|complete|fill|provide|create|connect)\b/i.test(t)) continue;
       return t;
@@ -438,11 +441,11 @@ function parseIcims() {
       .split("|")[0]
       .split("-")
       .map((s) => s.trim())
-      .find((s) => s && !bad.test(s) && s.length > 5 && !(typeof isWeakRole === "function" && isWeakRole(s))),
+      .find((s) => s && !bad.test(s) && s.length > 5 && !isWeakRole(s, "icims")),
   );
 
   // Hostname tenant → company: apply2-republicfinance.icims.com → Republic Finance
-  // (strip apply / apply2 / careers / jobs prefixes — not part of the brand)
+  // Brand aliases / ApplyN chrome → ats.js → ApplyTrackATS.icims
   const host = location.hostname.replace(/^www\./, "");
   let company = host
     .replace(/\.icims\.com$/i, "")
@@ -450,13 +453,9 @@ function parseIcims() {
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
-  if (/^Alaskaair$/i.test(company)) company = "Alaska Airlines";
-  if (/^Republicfinance$/i.test(company.replace(/\s/g, ""))) company = "Republic Finance";
-  if (/publicis\s*groupe/i.test(company) || /^publicisgroupe$/i.test(company.replace(/\s/g, ""))) {
-    company = "Publicis Groupe";
-  }
+  company = scrubCompany(company, "icims");
 
-  const safeSlug = fromSlug && !(typeof isWeakRole === "function" && isWeakRole(fromSlug)) ? fromSlug : "";
+  const safeSlug = fromSlug && !isWeakRole(fromSlug, "icims") ? fromSlug : "";
 
   return {
     company: company || "iCIMS",
@@ -1256,54 +1255,8 @@ function parseSuccessFactors() {
   );
 }
 
-/** True when text is form/confirmation chrome — never use as the job title. */
-function isWeakRole(role) {
-  const t = (role || "").trim();
-  if (!t || t === "Unknown role") return true;
-  // ATS / vendor chrome mistaken for a title
-  if (
-    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|selector software|career center|recruitment)$/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  // Tab title leftovers: "… - GM Financial United States Careers"
-  if (/\bcareers?\s*$/i.test(t)) return true;
-  // Company + country (e.g. "GM Financial United States") — not a job title
-  if (
-    /\b(united states|united kingdom|canada|australia|germany|india)\s*$/i.test(t) &&
-    !/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  // iCIMS / generic apply-wizard step headings
-  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center)\b/i.test(
-    t,
-  );
-}
-
-function stripCompanyRegion(company) {
-  return (company || "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/\s*,?\s*(united states|united kingdom|usa|uk|canada|australia|india|germany)\s*$/i, "")
-    .trim();
-}
-
-function isWeakCompany(company) {
-  const t = (company || "").trim();
-  if (!t || t.length < 2) return true;
-  // iCIMS portal chrome left in the name: "Apply2 Republicfinance"
-  if (/^apply\d*\b/i.test(t)) return true;
-  // Oracle SaaS tenant host mistaken for company: FA-EXVU-SAASFAPROD1
-  if (/^fa[-_]/i.test(t) || /saasfaprod/i.test(t) || /^oracle(\s+career)?$/i.test(t)) return true;
-  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career)\b/i.test(
-    t,
-  );
-}
+// isWeakRole / isWeakCompany / scrub* / normalizeParsed → defined in ats.js
+// (per-ATS quirks live there so fixing one source does not affect others)
 
 function readJobCtx(key) {
   try {
@@ -1340,24 +1293,25 @@ function writeJobCtx(parsed) {
  */
 function rememberJob(parsed) {
   if (!parsed?.source || !parsed.jobKey) return;
+  const src = parsed.source;
   // Never lock wizard chrome ("Candidate profile", "Enter your information", …)
-  if (isWeakRole(parsed.role)) return;
+  if (isWeakRole(parsed.role, src)) return;
   try {
     const existing =
       readJobCtx(`applytrack:job:${parsed.jobKey}`) ||
-      readJobCtx(`applytrack:ctx:${parsed.source}`);
+      readJobCtx(`applytrack:ctx:${src}`);
     // Already locked with a real title for this posting — keep it
     if (
       existing?.locked &&
       existing.jobKey === parsed.jobKey &&
-      !isWeakRole(existing.role)
+      !isWeakRole(existing.role, src)
     ) {
       return;
     }
     // Same jobKey already has a stronger real title — don't downgrade
     if (
       existing?.jobKey === parsed.jobKey &&
-      !isWeakRole(existing.role) &&
+      !isWeakRole(existing.role, src) &&
       existing.role &&
       existing.role !== parsed.role
     ) {
@@ -1371,15 +1325,17 @@ function rememberJob(parsed) {
 
 /**
  * Prefer the locked listing capture over whatever the current page parses.
+ * Company/role scrubbing is source-specific (see ats.js) — shared merge stays generic.
  */
 function mergeRememberedJob(parsed, source) {
   try {
+    const src = source || parsed?.source;
     let prev = parsed?.jobKey ? readJobCtx(`applytrack:job:${parsed.jobKey}`) : null;
-    if (!prev && source) prev = readJobCtx(`applytrack:ctx:${source}`);
+    if (!prev && src) prev = readJobCtx(`applytrack:ctx:${src}`);
     // Confirmation pages sometimes lose the id — use latest only if same source
     if (!prev) {
       const latest = readJobCtx("applytrack:job:latest");
-      if (latest && (!source || latest.source === source || !parsed?.jobKey)) prev = latest;
+      if (latest && (!src || latest.source === src || !parsed?.jobKey)) prev = latest;
     }
     if (!prev) return parsed;
 
@@ -1388,7 +1344,7 @@ function mergeRememberedJob(parsed, source) {
       return parsed;
     }
 
-    const useLocked = Boolean(prev.locked && !isWeakRole(prev.role));
+    const useLocked = Boolean(prev.locked && !isWeakRole(prev.role, src));
     // Don't keep a lock where role is just the company name
     const lockedIsCompany =
       prev.role &&
@@ -1399,27 +1355,31 @@ function mergeRememberedJob(parsed, source) {
     const preferPrevRole =
       keepLock ||
       (Boolean(prev.role) &&
-        !isWeakRole(prev.role) &&
+        !isWeakRole(prev.role, src) &&
         !lockedIsCompany &&
-        (isWeakRole(parsed.role) || !parsed.role));
+        (isWeakRole(parsed.role, src) || !parsed.role));
+
+    const prevCo = scrubCompany(prev.company, src);
+    const nextCo = scrubCompany(parsed.company, src);
+    let company;
+    if (keepLock && !isWeakCompany(prevCo, src)) {
+      // Allow cleaner scrubbed brand to replace a longer locked one
+      if (nextCo && nextCo.length < prevCo.length && prev.company !== prevCo) company = nextCo;
+      else company = prevCo || prev.company;
+    } else if (isWeakCompany(nextCo, src)) {
+      company = prevCo || nextCo || prev.company || parsed.company;
+    } else {
+      company = nextCo || prevCo || parsed.company;
+    }
+
     return {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
-      role: preferPrevRole ? prev.role : parsed.role,
-      company: (() => {
-        const prevCo = stripCompanyRegion(prev.company);
-        const nextCo = stripCompanyRegion(parsed.company);
-        if (keepLock && !isWeakCompany(prevCo)) {
-          // Upgrade "GM Financial United States" → "GM Financial" when page has cleaner brand
-          if (nextCo && nextCo.length < prevCo.length && prev.company !== prevCo) return nextCo;
-          return prevCo || prev.company;
-        }
-        if (isWeakCompany(nextCo)) return prevCo || nextCo || prev.company || parsed.company;
-        return nextCo || prevCo || parsed.company;
-      })(),
+      role: preferPrevRole ? scrubRole(prev.role, src) : scrubRole(parsed.role, src) || parsed.role,
+      company,
       // Keep the original listing URL from first capture
       url: prev.url || parsed.url,
-      source: parsed.source || prev.source || source,
+      source: parsed.source || prev.source || src,
     };
   } catch {
     return parsed;
@@ -1429,9 +1389,11 @@ function mergeRememberedJob(parsed, source) {
 /** Final payload for UI / save — always listing details when cached. */
 function resolveJobPayload(parsed) {
   if (!parsed) return parsed;
-  const merged = mergeRememberedJob(parsed, parsed.source);
-  rememberJob(merged);
-  return merged;
+  const normalized = typeof normalizeParsed === "function" ? normalizeParsed(parsed) : parsed;
+  const merged = mergeRememberedJob(normalized, normalized.source);
+  const out = typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
+  rememberJob(out);
+  return out;
 }
 
 /**
@@ -1439,9 +1401,10 @@ function resolveJobPayload(parsed) {
  * Works even when the ATS parse is weak / missing a jobKey.
  */
 function lockManualJob(company, role, base) {
+  const src = base?.source;
   const c = (company || "").trim();
   const r = (role || "").trim();
-  if (!r || isWeakRole(r)) return base || null;
+  if (!r || isWeakRole(r, src)) return base || null;
   const prev = base || {};
   const jobKey =
     prev.jobKey ||
@@ -1509,21 +1472,14 @@ function parseOracleCloud() {
   const badShell =
     /^(apply now|view more jobs|job information|job description|hello|careers?|home|sign in|log in|work summary|my applications|info and alerts|personal info|candidate|search jobs|be\s)/i;
 
-  /** Drop tab-title chrome: "Role - GM Financial United States Careers" → "Role" */
-  function scrubOracleRole(t) {
-    return (t || "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .replace(/\s*[-–—|]\s+.+?\s+careers?\s*$/i, "")
-      .replace(/\s*[-–—|]\s+[^|–—]+?\s+united states\s*$/i, "")
-      .trim();
-  }
+  // Title/company scrubbers live in ats.js → ApplyTrackATS.oracle
+  const scrub = (t) => scrubRole(t, "oracle");
+  const scrubCo = (t) => scrubCompany(t, "oracle");
 
   function looksLikeRole(t) {
-    const s = scrubOracleRole(t);
+    const s = scrub(t);
     if (!s || s.length < 8 || badShell.test(s)) return false;
-    if (/\bcareers?\s*$/i.test(s)) return false;
-    if (typeof isWeakRole === "function" && isWeakRole(s)) return false;
+    if (isWeakRole(s, "oracle")) return false;
     return true;
   }
 
@@ -1542,7 +1498,7 @@ function parseOracleCloud() {
     let best = "";
     let bestScore = -1e9;
     for (const raw of cands) {
-      const t = scrubOracleRole(raw);
+      const t = scrub(raw);
       if (!looksLikeRole(t)) continue;
       const sc = scoreRole(t);
       if (sc > bestScore) {
@@ -1574,19 +1530,10 @@ function parseOracleCloud() {
     document.title.split(/[|–—]/).map((s) => s.trim())[0],
   );
 
-  function cleanCompanyName(t) {
-    return (t || "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .replace(/\s+technology\s*$/i, "")
-      .replace(/\s*,?\s*(united states|united kingdom|usa|uk|canada|australia|india|germany)\s*$/i, "")
-      .trim();
-  }
-
   function looksLikeCompany(t) {
-    const s = cleanCompanyName(t);
+    const s = scrubCo(t);
     if (!s || s.length < 2 || s.length > 80) return false;
-    if (typeof isWeakCompany === "function" && isWeakCompany(s)) return false;
+    if (isWeakCompany(s, "oracle")) return false;
     if (/logo|image|oraclecloud|candidate experience|sign in/i.test(s)) return false;
     return true;
   }
@@ -1598,21 +1545,21 @@ function parseOracleCloud() {
     const t = textOf(el);
     const m = t.match(/^why\s+(.+?)(?:\s+technology)?\s*\??$/i);
     if (m && looksLikeCompany(m[1])) {
-      company = cleanCompanyName(m[1]);
+      company = scrubCo(m[1]);
       break;
     }
   }
 
-  if (!company && looksLikeCompany(ldCompany)) company = cleanCompanyName(ldCompany);
+  if (!company && looksLikeCompany(ldCompany)) company = scrubCo(ldCompany);
 
   const og = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
-  if (!company && looksLikeCompany(og)) company = cleanCompanyName(og);
+  if (!company && looksLikeCompany(og)) company = scrubCo(og);
 
   const logoAlt = textOf(
     document.querySelector("header img[alt], [class*='logo'] img[alt], a[class*='logo'] img[alt]"),
   );
   if (!company && looksLikeCompany(logoAlt) && !/logo|image/i.test(logoAlt)) {
-    company = cleanCompanyName(logoAlt);
+    company = scrubCo(logoAlt);
   }
 
   // Header brand / org line (not the SaaS tenant host)
@@ -1622,7 +1569,7 @@ function parseOracleCloud() {
         "header a[aria-label], [class*='company-name'], [class*='organization'], [class*='employer']",
       ),
     );
-    if (looksLikeCompany(brand)) company = cleanCompanyName(brand);
+    if (looksLikeCompany(brand)) company = scrubCo(brand);
   }
 
   // Never use fa-*-saasfaprod1 tenant hostname as the company
@@ -1630,13 +1577,13 @@ function parseOracleCloud() {
     const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ");
     if (/^jpmc$/i.test(sub.trim())) company = "JPMorgan Chase";
     else if (looksLikeCompany(sub) && !/saasfa|exvu|prod\d/i.test(sub)) {
-      company = cleanCompanyName(sub.replace(/\b\w/g, (c) => c.toUpperCase()));
+      company = scrubCo(sub.replace(/\b\w/g, (c) => c.toUpperCase()));
     }
   }
 
   return {
-    company: stripCompanyRegion(company) || company || "Unknown",
-    role: scrubOracleRole(role) || role || "Unknown role",
+    company: company || "Unknown",
+    role: role || "Unknown role",
     url: location.href.split("?")[0],
     jobKey: jobId ? `oracle:${jobId}` : null,
     source: "oracle",

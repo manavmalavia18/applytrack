@@ -357,7 +357,9 @@
 
       const canEdit = !found || stale;
       const weakTitle =
-        typeof isWeakRole === "function" ? isWeakRole(role) : !role || role === "Job posting";
+        typeof isWeakRole === "function"
+          ? isWeakRole(role, parsed?.source)
+          : !role || role === "Job posting";
 
       let html = `
         <div class="status ${statusClass}">${escapeHtml(statusText)}</div>
@@ -561,13 +563,13 @@
       const manualOk =
         parsed?.manual &&
         typeof isWeakRole === "function" &&
-        !isWeakRole(parsed.role);
+        !isWeakRole(parsed.role, parsed?.source);
       if (parsed.source === "oracle" && !parsed.jobKey && !manualOk) {
         error = "Open the job page (…/job/####), or type the role/company above.";
         if (open) render();
         return;
       }
-      if (typeof isWeakRole === "function" && isWeakRole(parsed.role)) {
+      if (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source)) {
         error = "Enter the job title (and company) above, then try again.";
         setOpen(true);
         render();

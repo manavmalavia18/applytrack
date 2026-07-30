@@ -25,7 +25,7 @@ document.getElementById("mark").addEventListener("click", async () => {
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["parsers.js"],
+      files: ["ats.js", "parsers.js"],
     });
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -83,7 +83,7 @@ document.getElementById("show").addEventListener("click", async () => {
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["parsers.js", "content.js"],
+      files: ["ats.js", "parsers.js", "content.js"],
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
