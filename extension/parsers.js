@@ -1431,7 +1431,8 @@ function parseJobPage() {
   else if (host.includes("icims.com")) parsed = parseIcims();
   else if (
     host.includes("entertimeonline.com") ||
-    (host.includes("adp.com") && /ShowJob|careers/i.test(location.href))
+    host.includes("workforcenow.adp.com") ||
+    (host.includes("adp.com") && /ShowJob|careers|recruit|JobDetails|cid=/i.test(location.href))
   ) {
     parsed = parseAdp();
   } else if (
