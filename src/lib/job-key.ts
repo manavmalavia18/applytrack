@@ -156,6 +156,15 @@ export function normalizeJobUrl(raw: string): string {
       const id = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
       if (id) return portal ? `paycom:${portal}:${id}` : `paycom:${id}`;
     }
+    if (host.includes("teamtailor.com")) {
+      const id = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
+      if (id) return `teamtailor:${id}`;
+    }
+    // Custom-domain Teamtailor boards often use /jobs/{id}-slug
+    if (/\/jobs\/\d+[-/]/i.test(url.pathname) && /careers\.|jobs\./i.test(host)) {
+      const id = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
+      if (id) return `teamtailor:${id}`;
+    }
     url.searchParams.sort();
     return `${host}${url.pathname}${url.search}`.toLowerCase();
   } catch {
@@ -232,6 +241,10 @@ export function detectSource(raw: string): string {
     if (host.includes("taleo.net")) return "taleo";
     if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) return "dayforce";
     if (host.includes("paycomonline.net")) return "paycom";
+    if (host.includes("teamtailor.com")) return "teamtailor";
+    if (/\/jobs\/\d+[-/]/i.test(new URL(raw).pathname) && /careers\.|jobs\./i.test(host)) {
+      return "teamtailor";
+    }
     return host.split(".")[0] || "web";
   } catch {
     return "manual";

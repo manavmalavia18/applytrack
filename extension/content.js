@@ -743,6 +743,7 @@
       parsed?.source === "taleo" ||
       parsed?.source === "dayforce" ||
       parsed?.source === "paycom" ||
+      parsed?.source === "teamtailor" ||
       parsed?.source === "successfactors" ||
       parsed?.source === "paylocity" ||
       parsed?.source === "ultipro" ||
@@ -756,6 +757,7 @@
       location.hostname.includes("taleo") ||
       location.hostname.includes("dayforce") ||
       location.hostname.includes("paycom") ||
+      location.hostname.includes("teamtailor") ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||

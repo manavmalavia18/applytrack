@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.5.54",
-  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, Dayforce, Paycom, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
+  "version": "0.5.55",
+  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, Dayforce, Paycom, Teamtailor, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://*/*",
@@ -39,6 +39,7 @@
         "https://*.paylocity.com/*",
         "https://*.paycomonline.net/*",
         "https://www.paycomonline.net/*",
+        "https://*.teamtailor.com/*",
         "https://*.ultipro.com/*",
         "https://*.ukg.com/*",
         "https://*.phenom.com/*",

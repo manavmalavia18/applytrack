@@ -152,6 +152,24 @@ const ApplyTrackATS = {
     },
   },
 
+  teamtailor: {
+    scrubCompany(t) {
+      const c = (t || "").trim().replace(/\s+/g, " ");
+      if (/^loadup$/i.test(c) || /^goloadup$/i.test(c.replace(/\s/g, ""))) {
+        return "LoadUp Technologies";
+      }
+      return c;
+    },
+    isWeakRole(t) {
+      return /^(apply now|who we are|about the role|what you('|’)ll do|what you bring|cookie|accept all|department|locations|our purpose|already working|this website uses cookies)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^teamtailor$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

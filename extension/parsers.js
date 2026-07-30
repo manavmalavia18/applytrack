@@ -55,6 +55,7 @@ function isNoisePage() {
     host.includes("dayforcehcm.com") ||
     host.includes("dayforce.com") ||
     host.includes("paycomonline.net") ||
+    host.includes("teamtailor.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -106,6 +107,8 @@ function isSupportedJobPage() {
   if (host.includes("paycomonline.net") && /\/ats\/|\/portal\/|\/jobs\//i.test(location.href)) {
     return true;
   }
+  // Teamtailor (custom career domains + *.teamtailor.com)
+  if (isTeamtailorPage()) return true;
   // JazzHR
   if (host.includes("applytojob.com") || host.includes("jazz.co")) return true;
   // SAP SuccessFactors (PACCAR, etc.)
@@ -193,9 +196,111 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor/i.test(
     location.href,
   );
+}
+
+/** Teamtailor career sites (often on custom domains like careers.goloadup.com). */
+function isTeamtailorPage() {
+  const host = location.hostname.replace(/^www\./, "");
+  const path = location.pathname;
+  if (host.includes("teamtailor.com")) return /\/jobs\//i.test(path);
+  if (!/\/jobs\/\d+/i.test(path)) return false;
+  try {
+    if (
+      document.querySelector(
+        'a[href*="teamtailor"], link[href*="teamtailor"], script[src*="teamtailor"], meta[content*="teamtailor"]',
+      )
+    ) {
+      return true;
+    }
+    const html = (document.documentElement?.innerHTML || "").slice(0, 12000);
+    if (/teamtailor/i.test(html)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function parseTeamtailor() {
+  // https://careers.goloadup.com/jobs/672255-software-engineer
+  // https://company.teamtailor.com/jobs/...
+  const path = location.pathname;
+  const jobId = path.match(/\/jobs\/(\d+)/)?.[1] || "";
+  const slug = path.match(/\/jobs\/\d+-([^/?#]+)/)?.[1] || "";
+
+  const bad =
+    /^(apply now|who we are|about the role|what you|cookie|accept all|department|locations|our purpose|already working|skip to|join |this website uses cookies)/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (isWeakRole(t, "teamtailor")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  let fromSlug = "";
+  if (slug) {
+    fromSlug = slug
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle']")),
+    fromSlug,
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+  );
+
+  let company = "";
+  const og = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
+  if (og && !isWeakCompany(og, "teamtailor")) company = scrubCompany(og, "teamtailor");
+
+  // "Software Engineer - LoadUp Technologies"
+  if (!company) {
+    const fromTitle = document.title.match(/\s[-–—]\s+(.+)$/)?.[1]?.trim();
+    if (fromTitle && !isWeakRole(fromTitle, "teamtailor")) {
+      company = scrubCompany(fromTitle, "teamtailor");
+    }
+  }
+
+  if (!company) {
+    const host = location.hostname.replace(/^www\./, "");
+    const brand = host
+      .replace(/^careers\./i, "")
+      .replace(/^jobs\./i, "")
+      .replace(/\.teamtailor\.com$/i, "")
+      .split(".")[0];
+    company = scrubCompany(brand.replace(/[-_]+/g, " "), "teamtailor");
+  }
+
+  const logo = textOf(document.querySelector("header img[alt], .logo img[alt], img[alt]"));
+  if (
+    logo &&
+    logo.length < 60 &&
+    !/logo|teamtailor|image/i.test(logo) &&
+    !isWeakCompany(logo, "teamtailor")
+  ) {
+    company = scrubCompany(logo, "teamtailor");
+  }
+
+  company = scrubCompany(company, "teamtailor") || company;
+
+  return {
+    company: company || "Unknown",
+    role: role || fromSlug || "Unknown role",
+    url: location.href.split("?")[0].split("#")[0],
+    jobKey: jobId ? `teamtailor:${jobId}` : null,
+    reqId: jobId || "",
+    source: "teamtailor",
+  };
 }
 
 function parsePaycom() {
@@ -2068,6 +2173,8 @@ function parseJobPage() {
     parsed = parseDayforce();
   } else if (host.includes("paycomonline.net") && /\/ats\/|\/portal\/|\/jobs\//i.test(location.href)) {
     parsed = parsePaycom();
+  } else if (isTeamtailorPage()) {
+    parsed = parseTeamtailor();
   } else {
     parsed = {
       company: "",
