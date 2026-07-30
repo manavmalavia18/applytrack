@@ -950,9 +950,21 @@ function parsePaylocity() {
     return false;
   }
 
+  /** "Platform Engineer Houston, TX" → "Platform Engineer" */
+  function stripLocation(t) {
+    return (t || "")
+      .replace(
+        /\s+(?:remote|hybrid|on-?site)?\s*[·•\-|]?\s*[A-Za-z .'-]+,\s*[A-Z]{2}(?:\s*,?\s*USA?)?\s*$/i,
+        "",
+      )
+      .replace(/\s+(?:remote|hybrid|on-?site)\s*$/i, "")
+      .replace(/\s+[A-Za-z .'-]+,\s*[A-Z]{2}\s*$/i, "")
+      .trim();
+  }
+
   function pick(...cands) {
     for (const raw of cands) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
+      const t = stripLocation((raw || "").trim().replace(/\s+/g, " "));
       if (!t || t.length < 3 || bad.test(t)) continue;
       if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
       if (looksLikeCompanyName(t)) continue;
@@ -978,12 +990,14 @@ function parsePaylocity() {
   // Apply pages: title often sits above the location line ("Platform Engineer" / "Houston, TX")
   const bodyTop = (document.body?.innerText || "").slice(0, 2500);
   const roleNearLocation =
-    bodyTop.match(
-      /\n\s*([A-Z][^\n]{4,80})\s*\n\s*(?:[A-Za-z .]+,\s*[A-Z]{2}|Remote|Hybrid)/,
-    )?.[1]?.trim() || "";
+    stripLocation(
+      bodyTop.match(
+        /\n\s*([A-Z][^\n]{4,80})\s*\n\s*(?:[A-Za-z .]+,\s*[A-Z]{2}|Remote|Hybrid)/,
+      )?.[1] || "",
+    ) || "";
 
   const headingCandidates = [...document.querySelectorAll("h1, h2, h3, [class*='job'], [class*='title']")]
-    .map((n) => textOf(n))
+    .map((n) => stripLocation(textOf(n)))
     .filter(Boolean);
 
   // Prefer role-like headings (Engineer, etc.) over generic ones
@@ -1031,7 +1045,7 @@ function parsePaylocity() {
   }
 
   // Never keep role === company
-  let finalRole = role || roleFromTitle || "Unknown role";
+  let finalRole = stripLocation(role || roleFromTitle || "Unknown role");
   if (
     finalRole &&
     company &&
