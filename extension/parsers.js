@@ -205,7 +205,7 @@ function parsePaycom() {
   const jobId = path.match(/\/jobs\/(\d+)/)?.[1] || "";
 
   const bad =
-    /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search|home|sign in)$/i;
+    /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search|home|sign in|loading\.{0,3}|please wait)$/i;
 
   function pick(...cands) {
     for (const raw of cands) {
@@ -217,11 +217,13 @@ function parsePaycom() {
     return "";
   }
 
+  // Paycom often injects a "Loading..." h1 before the real title paints
   const role = pick(
-    textOf(document.querySelector("h1")),
+    ...[...document.querySelectorAll("h1")].map((el) => textOf(el)),
     textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], .job-title")),
-    textOf(document.querySelector("h2")),
-    document.title.split(/[|–—-]/).map((s) => s.trim())[0],
+    ...[...document.querySelectorAll("h2")].map((el) => textOf(el)),
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+    document.title.trim(),
   );
 
   // Location line often sits under the title — not the company

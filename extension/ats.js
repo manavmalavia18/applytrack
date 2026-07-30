@@ -143,7 +143,7 @@ const ApplyTrackATS = {
         .trim();
     },
     isWeakRole(t) {
-      return /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search jobs)$/i.test(
+      return /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search jobs|loading\.{0,3}|please wait)$/i.test(
         t,
       );
     },
@@ -171,6 +171,7 @@ function isWeakRoleBase(role) {
   ) {
     return true;
   }
+  if (/^loading\.{0,3}$/i.test(t) || /^please wait\b/i.test(t)) return true;
   return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center|manual application|manual apply|start (your )?application|submit application)\b/i.test(
     t,
   );
