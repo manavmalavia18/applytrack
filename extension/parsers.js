@@ -46,6 +46,7 @@ function isNoisePage() {
     host.includes("phenompro.com") ||
     host.includes("salesforce-sites.com") ||
     host.includes("force.com") ||
+    host.includes("bamboohr.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -105,6 +106,10 @@ function isSupportedJobPage() {
   ) {
     return true;
   }
+  // BambooHR careers
+  if (host.includes("bamboohr.com") && /\/careers/i.test(location.pathname)) {
+    return true;
+  }
   // ADP / EnterTimeOnline career portals
   if (host.includes("entertimeonline.com")) return true;
   if (host.includes("adp.com") && /careers|ShowJob|recruit/i.test(location.href)) return true;
@@ -150,7 +155,7 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr/i.test(
     location.href,
   );
 }
@@ -554,6 +559,60 @@ function parseJazzHr() {
     url: location.href.split("?")[0],
     jobKey: jobId ? `jazzhr:${jobId}` : null,
     source: "jazzhr",
+  };
+}
+
+function parseBambooHr() {
+  // https://selectorsoftware.bamboohr.com/careers/193
+  const path = location.pathname;
+  const jobId =
+    path.match(/\/careers\/(\d+)/i)?.[1] ||
+    path.match(/\/jobs\/(\d+)/i)?.[1] ||
+    new URLSearchParams(location.search).get("id") ||
+    "";
+
+  const bad =
+    /^(apply for this job|about us|about the role|responsibilities|careers?|jobs?|home|sign in|location|department|employment type|minimum experience|link to this job|share)\b/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      return t;
+    }
+    return "";
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h2")),
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], .ResAts__title")),
+    document.title.split("|")[0].split("-")[0],
+  );
+
+  const host = location.hostname.replace(/^www\./, "");
+  let company = host
+    .replace(/\.bamboohr\.com$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+  // selectorsoftware → Selector (page logo says SELECTOR)
+  if (/^Selector\s*Software$/i.test(company) || /^Selectorsoftware$/i.test(company.replace(/\s/g, ""))) {
+    company = "Selector";
+  }
+  const logo = textOf(document.querySelector("header img[alt], .logo img[alt], img[alt]"));
+  if (logo && logo.length > 1 && logo.length < 40 && !/logo|bamboo|image/i.test(logo)) {
+    company = logo.replace(/\s+/g, " ").trim();
+  }
+  if (/^SELECTOR$/i.test(company)) company = "Selector";
+
+  return {
+    company: company || "BambooHR",
+    role: role || "Unknown role",
+    url: location.href.split("?")[0],
+    jobKey: jobId ? `bamboohr:${jobId}` : null,
+    source: "bamboohr",
   };
 }
 
@@ -1159,6 +1218,8 @@ function parseJobPage() {
     /Applicant|jobID|JobApplication|careers|Recruit/i.test(location.href)
   ) {
     parsed = parseSalesforceSites();
+  } else if (host.includes("bamboohr.com")) {
+    parsed = parseBambooHr();
   } else if (
     host.includes("oraclecloud.com") &&
     /CandidateExperience|\/job\/|hcmUI/i.test(location.href)

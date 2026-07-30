@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.5.30",
-  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce)",
+  "version": "0.5.31",
+  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://*/*",
@@ -40,6 +40,7 @@
         "https://*.phenompro.com/*",
         "https://*.salesforce-sites.com/*",
         "https://*.force.com/*",
+        "https://*.bamboohr.com/*",
         "https://www.linkedin.com/jobs/*",
         "https://linkedin.com/jobs/*",
         "https://*/*"
