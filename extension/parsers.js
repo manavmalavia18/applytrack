@@ -205,14 +205,25 @@ function mightBecomeJobPage() {
 }
 
 function parseSmartRecruiters() {
-  // https://jobs.smartrecruiters.com/AbbVie/3743990014350476-associate-software-engineer-i
-  // Apply: https://jobs.smartrecruiters.com/.../application or apply.smartrecruiters.com
+  // Listing: https://jobs.smartrecruiters.com/AbbVie/3743990014350476-associate-software-engineer-i
+  // Apply:   .../application · apply.smartrecruiters.com
+  // Oneclick: .../oneclick-ui/company/AbbVie/publication/{id|uuid}
+  //           .../oneclick-ui/company/AbbVie/job/{id}
   const path = location.pathname;
   const parts = path.split("/").filter(Boolean);
-  // jobs.smartrecruiters.com/{Company}/{id}-{slug}
-  const companySlug = parts[0] && !/^(jobs|application|oneclick)$/i.test(parts[0]) ? parts[0] : parts[1] || "";
+  const isOneclick = /\/oneclick-ui\//i.test(path) || /^oneclick(-ui)?$/i.test(parts[0] || "");
+
+  // Prefer /oneclick-ui/company/{Company}/… then listing /{Company}/{id}-{slug}
+  const oneclickCo = path.match(/\/oneclick-ui\/company\/([^/?#]+)/i)?.[1] || "";
+  const companySlug =
+    oneclickCo ||
+    (parts[0] && !/^(jobs|application|oneclick(-ui)?|company|publication)$/i.test(parts[0])
+      ? parts[0]
+      : "");
+
   const idSeg =
     parts.find((p) => /^\d{6,}(?:-|$)/.test(p)) ||
+    path.match(/\/(?:publication|job)\/(\d{6,})(?:\/|$)/i)?.[1] ||
     path.match(/\/(\d{10,})(?:-|\/|$)/)?.[1] ||
     "";
   const jobId = String(idSeg).match(/^(\d{6,})/)?.[1] || "";
@@ -221,7 +232,7 @@ function parseSmartRecruiters() {
     : path.match(/\/\d{6,}-([^/?#]+)/)?.[1] || "";
 
   const bad =
-    /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid|full[- ]?time|workday global grade|see who|start application)$/i;
+    /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid|full[- ]?time|workday global grade|see who|start application|oneclick)$/i;
 
   function pick(...cands) {
     for (const raw of cands) {
@@ -242,12 +253,28 @@ function parseSmartRecruiters() {
       .trim();
   }
 
-  const role = pick(
-    textOf(document.querySelector("h1")),
-    textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [itemprop='title']")),
-    fromSlug,
-    document.title.split(/[|–—]/).map((s) => s.trim())[0],
-  );
+  // Title is often "Role - Company"; split on separators, not in-word hyphens
+  const titleBits = document.title
+    .split(/\s*[|–—]\s*|\s+-\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const fromTitle = pick(...titleBits);
+
+  // On oneclick/application wizards, page chrome (IE11 banner, form labels) is
+  // unreliable — prefer slug/title, then DOM. Solid lock still wins in resolve.
+  const role = isOneclick
+    ? pick(
+        fromSlug,
+        fromTitle,
+        textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [itemprop='title']")),
+        ...[...document.querySelectorAll("h1")].map((el) => textOf(el)),
+      )
+    : pick(
+        textOf(document.querySelector("h1")),
+        textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [itemprop='title']")),
+        fromSlug,
+        fromTitle,
+      );
 
   let company = scrubCompany(
     (companySlug || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
@@ -270,9 +297,17 @@ function parseSmartRecruiters() {
   }
   company = scrubCompany(company, "smartrecruiters") || company;
 
+  // Never surface a weak banner/label as the role — leave empty so solid lock wins
+  const safeRole =
+    role && !isWeakRole(role, "smartrecruiters")
+      ? role
+      : fromSlug && !isWeakRole(fromSlug, "smartrecruiters")
+        ? fromSlug
+        : "Unknown role";
+
   return {
     company: company || "Unknown",
-    role: role || fromSlug || "Unknown role",
+    role: safeRole,
     url: location.href.split("?")[0].split("#")[0],
     jobKey: jobId ? `smartrecruiters:${jobId}` : null,
     reqId: jobId || "",

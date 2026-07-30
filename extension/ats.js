@@ -177,12 +177,21 @@ const ApplyTrackATS = {
       return c;
     },
     isWeakRole(t) {
-      return /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid mode|full[- ]?time|workday global grade)$/i.test(
-        t,
+      const s = (t || "").trim();
+      // oneclick-ui injects a browser-support banner that often lands in <h1>
+      if (
+        /internet explorer|no longer supported|browser (is )?not supported|\bie\s*11\b|unsupported browser|upgrade your browser/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      return /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid mode|full[- ]?time|workday global grade|oneclick|start application)$/i.test(
+        s,
       );
     },
     isWeakCompany(t) {
-      return /^smartrecruiters$/i.test(t);
+      return /^smartrecruiters$/i.test(t) || /^oneclick(-ui)?$/i.test(t);
     },
   },
 
