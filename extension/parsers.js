@@ -47,6 +47,7 @@ function isNoisePage() {
     host.includes("salesforce-sites.com") ||
     host.includes("force.com") ||
     host.includes("bamboohr.com") ||
+    host.includes("workable.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -108,6 +109,13 @@ function isSupportedJobPage() {
   }
   // BambooHR careers (and apply flow under /careers)
   if (host.includes("bamboohr.com")) return true;
+  // Workable job boards
+  if (host.includes("workable.com") && /\/view\/|\/jobs\/|\/j\//i.test(location.pathname + location.href)) {
+    return true;
+  }
+  if (host.includes("workable.com") && /jobs\.workable|apply\.workable/i.test(host + location.href)) {
+    return true;
+  }
   // ADP / EnterTimeOnline career portals
   if (host.includes("entertimeonline.com")) return true;
   if (host.includes("adp.com") && /careers|ShowJob|recruit/i.test(location.href)) return true;
@@ -153,7 +161,7 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable/i.test(
     location.href,
   );
 }
@@ -557,6 +565,77 @@ function parseJazzHr() {
     url: location.href.split("?")[0],
     jobKey: jobId ? `jazzhr:${jobId}` : null,
     source: "jazzhr",
+  };
+}
+
+function parseWorkable() {
+  // https://jobs.workable.com/view/d2s6Wu62Ef85iBE6qwbWhp/software-engineer-in-plano-at-samsung-sds-america
+  const path = location.pathname;
+  const viewMatch = path.match(/\/view\/([^/]+)(?:\/([^/]+))?/i);
+  const jobId = viewMatch?.[1] || path.match(/\/j\/([^/]+)/i)?.[1] || "";
+  const slug = viewMatch?.[2] || "";
+
+  let fromSlug = "";
+  if (slug) {
+    try {
+      fromSlug = decodeURIComponent(slug);
+    } catch {
+      fromSlug = slug;
+    }
+    // software-engineer-in-plano-at-samsung-sds-america → Software Engineer
+    fromSlug = fromSlug
+      .replace(/-in-.*$/i, "")
+      .replace(/-at-.*$/i, "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  const bad =
+    /^(apply now|share job|description|visit website|careers?|jobs?|home|sign in|on-site|full-time|posted)\b/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      return t;
+    }
+    return "";
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("h2")),
+    textOf(document.querySelector("[data-ui='job-title'], [class*='job-title']")),
+    fromSlug,
+    document.title.split("|")[0].split("-")[0],
+  );
+
+  let company =
+    textOf(document.querySelector("[data-ui='company-name'], [class*='company-name'] a, [class*='company'] a")) ||
+    textOf(document.querySelector("aside h2, aside h3, [class*='company'] h2"));
+  if (!company || /visit website|samsung sds$/i.test(company) && company.length > 40) {
+    /* keep trying */
+  }
+  // "Software Engineer at Samsung SDS America" / sidebar "SAMSUNG SDS"
+  const atMatch =
+    (document.body?.innerText || "").match(/\bat\s+(Samsung SDS(?: America)?)\b/i) ||
+    document.title.match(/\bat\s+([^|\-]+)/i);
+  if ((!company || company.length < 3) && atMatch) company = atMatch[1].trim();
+  if (!company) {
+    company = textOf(document.querySelector("img[alt]")) || "";
+    if (/logo|workable|image/i.test(company) || company.length > 60) company = "";
+  }
+  if (/^SAMSUNG SDS$/i.test(company)) company = "Samsung SDS America";
+  if (!company) company = "Workable";
+
+  return {
+    company,
+    role: role || fromSlug || "Unknown role",
+    url: location.href.split("?")[0],
+    jobKey: jobId ? `workable:${jobId}` : null,
+    source: "workable",
   };
 }
 
@@ -1218,6 +1297,8 @@ function parseJobPage() {
     parsed = parseSalesforceSites();
   } else if (host.includes("bamboohr.com")) {
     parsed = parseBambooHr();
+  } else if (host.includes("workable.com")) {
+    parsed = parseWorkable();
   } else if (
     host.includes("oraclecloud.com") &&
     /CandidateExperience|\/job\/|hcmUI/i.test(location.href)

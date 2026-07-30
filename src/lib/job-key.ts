@@ -107,6 +107,10 @@ export function normalizeJobUrl(raw: string): string {
       const id = url.pathname.match(/\/careers\/(\d+)/i)?.[1] || url.pathname.match(/\/jobs\/(\d+)/i)?.[1];
       if (id) return `bamboohr:${id}`;
     }
+    if (host.includes("workable.com")) {
+      const id = url.pathname.match(/\/view\/([^/]+)/i)?.[1] || url.pathname.match(/\/j\/([^/]+)/i)?.[1];
+      if (id) return `workable:${id}`;
+    }
     if (host.includes("entertimeonline.com") || host.includes("adp.com")) {
       const id =
         url.searchParams.get("ShowJob") ||
@@ -188,6 +192,7 @@ export function detectSource(raw: string): string {
     }
     if (host.includes("salesforce-sites.com") || host.includes("force.com")) return "salesforce";
     if (host.includes("bamboohr.com")) return "bamboohr";
+    if (host.includes("workable.com")) return "workable";
     if (host.includes("entertimeonline.com") || host.includes("adp.com")) return "adp";
     if (host.includes("oraclecloud.com")) return "oracle";
     return host.split(".")[0] || "web";
