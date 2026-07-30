@@ -56,6 +56,7 @@ function isNoisePage() {
     host.includes("dayforce.com") ||
     host.includes("paycomonline.net") ||
     host.includes("teamtailor.com") ||
+    host.includes("smartrecruiters.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -109,6 +110,8 @@ function isSupportedJobPage() {
   }
   // Teamtailor (custom career domains + *.teamtailor.com)
   if (isTeamtailorPage()) return true;
+  // SmartRecruiters
+  if (host.includes("smartrecruiters.com")) return true;
   // JazzHR
   if (host.includes("applytojob.com") || host.includes("jazz.co")) return true;
   // SAP SuccessFactors (PACCAR, etc.)
@@ -196,9 +199,85 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor|smartrecruiters/i.test(
     location.href,
   );
+}
+
+function parseSmartRecruiters() {
+  // https://jobs.smartrecruiters.com/AbbVie/3743990014350476-associate-software-engineer-i
+  // Apply: https://jobs.smartrecruiters.com/.../application or apply.smartrecruiters.com
+  const path = location.pathname;
+  const parts = path.split("/").filter(Boolean);
+  // jobs.smartrecruiters.com/{Company}/{id}-{slug}
+  const companySlug = parts[0] && !/^(jobs|application|oneclick)$/i.test(parts[0]) ? parts[0] : parts[1] || "";
+  const idSeg =
+    parts.find((p) => /^\d{6,}(?:-|$)/.test(p)) ||
+    path.match(/\/(\d{10,})(?:-|\/|$)/)?.[1] ||
+    "";
+  const jobId = String(idSeg).match(/^(\d{6,})/)?.[1] || "";
+  const slug = String(idSeg).includes("-")
+    ? String(idSeg).replace(/^\d+-/, "")
+    : path.match(/\/\d{6,}-([^/?#]+)/)?.[1] || "";
+
+  const bad =
+    /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid|full[- ]?time|workday global grade|see who|start application)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (isWeakRole(t, "smartrecruiters")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  let fromSlug = "";
+  if (slug) {
+    fromSlug = slug
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [itemprop='title']")),
+    fromSlug,
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+  );
+
+  let company = scrubCompany(
+    (companySlug || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    "smartrecruiters",
+  );
+  const logo = textOf(
+    document.querySelector("header img[alt], [class*='logo'] img[alt], img[alt]"),
+  );
+  if (
+    logo &&
+    logo.length < 60 &&
+    !/logo|smartrecruiters|image/i.test(logo) &&
+    !isWeakCompany(logo, "smartrecruiters")
+  ) {
+    company = scrubCompany(logo, "smartrecruiters");
+  }
+  const og = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
+  if ((!company || isWeakCompany(company, "smartrecruiters")) && og) {
+    company = scrubCompany(og, "smartrecruiters");
+  }
+  company = scrubCompany(company, "smartrecruiters") || company;
+
+  return {
+    company: company || "Unknown",
+    role: role || fromSlug || "Unknown role",
+    url: location.href.split("?")[0].split("#")[0],
+    jobKey: jobId ? `smartrecruiters:${jobId}` : null,
+    reqId: jobId || "",
+    source: "smartrecruiters",
+  };
 }
 
 /** Teamtailor career sites (often on custom domains like careers.goloadup.com). */
@@ -2175,6 +2254,8 @@ function parseJobPage() {
     parsed = parsePaycom();
   } else if (isTeamtailorPage()) {
     parsed = parseTeamtailor();
+  } else if (host.includes("smartrecruiters.com")) {
+    parsed = parseSmartRecruiters();
   } else {
     parsed = {
       company: "",

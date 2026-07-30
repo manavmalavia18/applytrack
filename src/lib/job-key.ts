@@ -165,6 +165,10 @@ export function normalizeJobUrl(raw: string): string {
       const id = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
       if (id) return `teamtailor:${id}`;
     }
+    if (host.includes("smartrecruiters.com")) {
+      const id = url.pathname.match(/\/(\d{10,})(?:-|\/|$)/)?.[1];
+      if (id) return `smartrecruiters:${id}`;
+    }
     url.searchParams.sort();
     return `${host}${url.pathname}${url.search}`.toLowerCase();
   } catch {
@@ -245,6 +249,7 @@ export function detectSource(raw: string): string {
     if (/\/jobs\/\d+[-/]/i.test(new URL(raw).pathname) && /careers\.|jobs\./i.test(host)) {
       return "teamtailor";
     }
+    if (host.includes("smartrecruiters.com")) return "smartrecruiters";
     return host.split(".")[0] || "web";
   } catch {
     return "manual";

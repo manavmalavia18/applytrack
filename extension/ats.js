@@ -170,6 +170,22 @@ const ApplyTrackATS = {
     },
   },
 
+  smartrecruiters: {
+    scrubCompany(t) {
+      const c = (t || "").trim().replace(/\s+/g, " ");
+      if (/^abbvie$/i.test(c)) return "AbbVie";
+      return c;
+    },
+    isWeakRole(t) {
+      return /^(i'?m interested|refer a friend|company description|job description|about |other jobs|apply|share|salary|hybrid mode|full[- ]?time|workday global grade)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^smartrecruiters$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

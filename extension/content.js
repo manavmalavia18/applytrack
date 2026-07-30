@@ -744,6 +744,7 @@
       parsed?.source === "dayforce" ||
       parsed?.source === "paycom" ||
       parsed?.source === "teamtailor" ||
+      parsed?.source === "smartrecruiters" ||
       parsed?.source === "successfactors" ||
       parsed?.source === "paylocity" ||
       parsed?.source === "ultipro" ||
@@ -758,6 +759,7 @@
       location.hostname.includes("dayforce") ||
       location.hostname.includes("paycom") ||
       location.hostname.includes("teamtailor") ||
+      location.hostname.includes("smartrecruiters") ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||
