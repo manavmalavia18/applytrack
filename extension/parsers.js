@@ -118,7 +118,10 @@ function isSupportedJobPage() {
   }
   // ADP / EnterTimeOnline career portals
   if (host.includes("entertimeonline.com")) return true;
-  if (host.includes("adp.com") && /careers|ShowJob|recruit/i.test(location.href)) return true;
+  if (host.includes("adp.com") && /careers|ShowJob|recruit|workforcenow|JobDetails|cid=/i.test(location.href)) {
+    return true;
+  }
+  if (host.includes("workforcenow.adp.com")) return true;
   // Oracle Cloud HCM — job detail or in-progress apply for that job (not profile/list)
   if (
     host.includes("oraclecloud.com") &&
@@ -161,7 +164,7 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com/i.test(
     location.href,
   );
 }
@@ -443,48 +446,109 @@ function parseIcims() {
 }
 
 function parseAdp() {
+  // EnterTimeOnline: ?ShowJob=…
+  // Workforce Now: workforcenow.adp.com/… Software Developer, Requisition ID: 3024
   const params = new URLSearchParams(location.search);
-  const jobId = params.get("ShowJob") || params.get("jobId") || params.get("JobId") || "";
+  const body = (document.body?.innerText || "").slice(0, 6000);
 
-  const bad = /^(apply for job|hello|log in|careers?|home|talent)\b/i;
+  const reqId =
+    body.match(/Requisition\s*(?:ID|#)?\s*[:.]?\s*(\d{3,})/i)?.[1] ||
+    params.get("reqId") ||
+    params.get("requisitionId") ||
+    "";
+
+  const jobId =
+    params.get("ShowJob") ||
+    params.get("jobId") ||
+    params.get("JobId") ||
+    params.get("jobId") ||
+    reqId ||
+    params.get("cid") ||
+    "";
+
+  const bad =
+    /^(apply for job|apply|hello|log in|sign in|careers?|career center|recruitment|home|talent|back|regular full-?time|new york|salary|job description)\b/i;
+
   function pick(...cands) {
     for (const raw of cands) {
       const t = (raw || "").trim().replace(/\s+/g, " ");
       if (!t || t.length < 3 || bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      if (/career center|recruitment/i.test(t)) continue;
       return t;
     }
     return "";
   }
 
-  const role = pick(
-    textOf(document.querySelector("h1")),
-    textOf(document.querySelector("h2")),
-    // "Apply for Job" header often has role under it
-    [...document.querySelectorAll("h1, h2, h3, [class*='job'], [class*='title']")]
-      .map((n) => textOf(n))
-      .find((t) => t && !bad.test(t) && t.length < 120),
-    document.title.split("|")[0].split("-")[0],
+  const headingCandidates = [...document.querySelectorAll("h1, h2, h3")]
+    .map((n) => textOf(n))
+    .filter(Boolean);
+
+  const roleLike = headingCandidates.find((t) =>
+    /engineer|developer|scientist|analyst|consultant|manager|designer|architect|specialist|officer|associate/i.test(
+      t,
+    ),
   );
 
-  // Path like /ta/A1SWorldgate.careers
-  const portal = location.pathname.match(/\/ta\/([^./]+)/)?.[1] || "";
-  let company = portal
-    .replace(/A\d+S/i, "")
-    .replace(/\.careers$/i, "")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .trim();
+  // Title often above "New York, NY, US" / job type line
+  const roleNearMeta =
+    body.match(
+      /\n\s*([A-Z][^\n]{3,90})\s*\n\s*(?:[A-Za-z .]+,\s*[A-Z]{2}|Regular|Full-?Time|Part-?Time|Requisition)/i,
+    )?.[1]?.trim() || "";
+
+  const role = pick(
+    roleLike,
+    roleNearMeta,
+    ...headingCandidates,
+    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], [class*='jobTitle']")),
+    // Never prefer bare document.title chrome like "Career Center | Recruitment"
+    document.title
+      .split("|")
+      .map((s) => s.trim())
+      .find((s) => s && !bad.test(s) && !/career center|recruitment/i.test(s)),
+  );
+
+  let company = "";
+  // JD often: "Municipal Credit Union (MCU) is a…"
+  const fromJd =
+    body.match(
+      /\b((?:Municipal Credit Union|MCU|[A-Z][A-Za-z0-9&.' -]{2,60}?)\s+(?:Credit Union|Bank|Inc|LLC|Corporation|Corp|Company|Group))\b/,
+    )?.[1] ||
+    body.match(/\b(Municipal Credit Union)\b/i)?.[1] ||
+    "";
+  if (fromJd) company = fromJd.trim();
+
   if (!company) {
-    company =
-      textOf(document.querySelector("header img[alt], .logo img[alt]")) ||
-      location.hostname.split(".")[0];
+    const portal = location.pathname.match(/\/ta\/([^./]+)/)?.[1] || "";
+    company = portal
+      .replace(/A\d+S/i, "")
+      .replace(/\.careers$/i, "")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .trim();
+  }
+  if (!company) {
+    const logo = textOf(document.querySelector("header img[alt], .logo img[alt], img[alt]"));
+    if (logo && logo.length > 2 && logo.length < 60 && !/logo|adp|image|career/i.test(logo)) {
+      company = logo;
+    }
+  }
+  if (!company || /^(workforcenow|adp|career)$/i.test(company)) {
+    company = fromJd || "ADP";
   }
   company = company.replace(/\b\w/g, (c) => c.toUpperCase());
+  if (/municipal credit union/i.test(company)) company = "Municipal Credit Union";
+
+  const jobKey = jobId
+    ? `adp:${jobId}`
+    : reqId
+      ? `adp:${reqId}`
+      : null;
 
   return {
-    company: company || "ADP Career",
+    company: company || "ADP",
     role: role || "Unknown role",
     url: location.href.split("#")[0],
-    jobKey: jobId ? `adp:${jobId}` : `adp:${location.pathname}`,
+    jobKey,
     source: "adp",
   };
 }
@@ -1176,13 +1240,13 @@ function isWeakRole(role) {
   if (!t || t === "Unknown role") return true;
   // ATS / vendor chrome mistaken for a title
   if (
-    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|selector software)$/i.test(
+    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|selector software|career center|recruitment)$/i.test(
       t,
     )
   ) {
     return true;
   }
-  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate|profile|follow your application|careers?|jobs?)\b/i.test(
+  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate|profile|follow your application|careers?|jobs?|career center)\b/i.test(
     t,
   );
 }

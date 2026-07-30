@@ -115,7 +115,9 @@ export function normalizeJobUrl(raw: string): string {
       const id =
         url.searchParams.get("ShowJob") ||
         url.searchParams.get("jobId") ||
-        url.searchParams.get("JobId");
+        url.searchParams.get("JobId") ||
+        url.searchParams.get("reqId") ||
+        url.searchParams.get("requisitionId");
       if (id) return `adp:${id}`;
     }
     if (host.includes("oraclecloud.com")) {
