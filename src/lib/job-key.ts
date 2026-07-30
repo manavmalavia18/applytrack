@@ -124,6 +124,15 @@ export function normalizeJobUrl(raw: string): string {
       const id = url.pathname.match(/\/job\/(\d+)/)?.[1];
       if (id) return `oracle:${id}`;
     }
+    if (host.includes("taleo.net")) {
+      const id =
+        url.searchParams.get("reqNo") ||
+        url.searchParams.get("job") ||
+        url.searchParams.get("jobId") ||
+        url.searchParams.get("requisition") ||
+        url.pathname.match(/\/jobdetail[^/]*\/(?:job\/)?(\d+)/i)?.[1];
+      if (id) return `taleo:${id}`;
+    }
     url.searchParams.sort();
     return `${host}${url.pathname}${url.search}`.toLowerCase();
   } catch {
@@ -156,7 +165,7 @@ export function isJunkRole(role: string): boolean {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
   if (/^you have applied for\b/i.test(t)) return true;
-  return /^(enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review( your application)?|application( form)?|my profile|work summary|demographics|preferences|thank you|candidate|profile)$/i.test(
+  return /^(enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review( your application)?|application( form)?|my profile|work summary|demographics|preferences|thank you|candidate|profile|privacy agreement)$/i.test(
     t,
   );
 }
@@ -197,6 +206,7 @@ export function detectSource(raw: string): string {
     if (host.includes("workable.com")) return "workable";
     if (host.includes("entertimeonline.com") || host.includes("adp.com")) return "adp";
     if (host.includes("oraclecloud.com")) return "oracle";
+    if (host.includes("taleo.net")) return "taleo";
     return host.split(".")[0] || "web";
   } catch {
     return "manual";

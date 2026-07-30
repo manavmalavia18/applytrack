@@ -51,6 +51,7 @@ function isNoisePage() {
     host.includes("force.com") ||
     host.includes("bamboohr.com") ||
     host.includes("workable.com") ||
+    host.includes("taleo.net") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -87,6 +88,13 @@ function isSupportedJobPage() {
   if (host.includes("myworkdayjobs.com") || /workday\.com$/i.test(host)) return true;
   if (host.includes("ashbyhq.com")) return true;
   if (host.includes("icims.com")) return true;
+  // Oracle Taleo (UHG, etc.) — careersection apply + job detail
+  if (
+    host.includes("taleo.net") &&
+    /careersection|jobdetail|requisition|reqNo=|application\.jss/i.test(location.href)
+  ) {
+    return true;
+  }
   // JazzHR
   if (host.includes("applytojob.com") || host.includes("jazz.co")) return true;
   // SAP SuccessFactors (PACCAR, etc.)
@@ -174,9 +182,83 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=/i.test(
     location.href,
   );
+}
+
+function parseTaleo() {
+  // https://uhg.taleo.net/careersection/application.jss?...&reqNo=3247475
+  // https://company.taleo.net/careersection/.../jobdetail.ftl?job=…
+  const params = new URLSearchParams(location.search);
+  const reqNo =
+    params.get("reqNo") ||
+    params.get("requisition") ||
+    params.get("job") ||
+    params.get("jobId") ||
+    params.get("rid") ||
+    location.pathname.match(/\/jobdetail[^/]*\/(?:job\/)?(\d+)/i)?.[1] ||
+    "";
+
+  const bad =
+    /^(privacy agreement|welcome|sign in|log in|my profile|my dashboard|select a language|job applicant|application|submit|review|questionnaire|eeo|equal opportunity|attachment|e-?signature|work here|our culture|hiring process|early careers|blog|home)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 5 || bad.test(t)) continue;
+      if (isWeakRole(t, "taleo")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  const role = pick(
+    textOf(
+      document.querySelector(
+        "[id*='reqTitle'], [id*='ReqTitle'], [class*='reqTitle'], [class*='jobtitle'], [class*='jobTitle'], .jobtitle, #jobTitle",
+      ),
+    ),
+    textOf(document.querySelector(".titlepage, .titleblock, .job-header h1")),
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("h2")),
+    document.title
+      .split(/[|–—]/)
+      .map((s) => s.trim())
+      .find((s) => s && !bad.test(s) && s.length > 5 && !isWeakRole(s, "taleo")),
+  );
+
+  // Tenant subdomain → brand: uhg.taleo.net → UnitedHealth Group (via ats.js)
+  const sub = location.hostname.replace(/\.taleo\.net$/i, "").replace(/^www\./, "");
+  let company = scrubCompany(
+    sub.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    "taleo",
+  );
+
+  const fromLogo = textOf(
+    document.querySelector(
+      "header img[alt], .header img[alt], .logo img[alt], img[alt*='United'], img[alt*='Optum']",
+    ),
+  );
+  if (fromLogo && fromLogo.length < 60 && !isWeakCompany(fromLogo, "taleo") && !/logo|image/i.test(fromLogo)) {
+    company = scrubCompany(fromLogo, "taleo");
+  }
+
+  // Policy / header copy often names the employer
+  if (!company || company === "Uhg" || /^uhg$/i.test(company)) {
+    const body = (document.body?.innerText || "").slice(0, 2500);
+    if (/unitedhealth\s*group/i.test(body)) company = "UnitedHealth Group";
+    else if (/\boptum\b/i.test(body)) company = "Optum";
+  }
+  company = scrubCompany(company, "taleo") || company;
+
+  return {
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: location.href.split("#")[0],
+    jobKey: reqNo ? `taleo:${reqNo}` : null,
+    source: "taleo",
+  };
 }
 
 function parseLinkedIn() {
@@ -1650,6 +1732,11 @@ function parseJobPage() {
     /CandidateExperience|\/job\/|hcmUI/i.test(location.href)
   ) {
     parsed = parseOracleCloud();
+  } else if (
+    host.includes("taleo.net") &&
+    /careersection|jobdetail|requisition|reqNo=|application\.jss/i.test(location.href)
+  ) {
+    parsed = parseTaleo();
   } else {
     parsed = {
       company: "",

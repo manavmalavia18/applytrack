@@ -68,6 +68,25 @@ const ApplyTrackATS = {
     },
   },
 
+  taleo: {
+    scrubCompany(t) {
+      const c = (t || "").trim().replace(/\s+/g, " ");
+      if (/^uhg$/i.test(c) || /^united\s*health(\s*group)?$/i.test(c)) return "UnitedHealth Group";
+      if (/^unitedhealthcare$/i.test(c.replace(/\s/g, ""))) return "UnitedHealth Group";
+      if (/^optum$/i.test(c)) return "Optum";
+      return c;
+    },
+    isWeakRole(t) {
+      // Apply wizard steps — never lock as the job title
+      return /^(privacy agreement|welcome\.?|you are not signed in|sign in|select a language|job applicant personal information|personal information handling|my profile|my dashboard|work here|our culture|hiring process|early careers|talent community|questionnaire|eeo|equal opportunity|submit application|review application|attachment|e-?signature)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^taleo$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

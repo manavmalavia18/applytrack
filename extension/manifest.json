@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.5.45",
-  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
+  "version": "0.5.46",
+  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://*/*",
@@ -29,6 +29,7 @@
         "https://*.icims.com/*",
         "https://*.entertimeonline.com/*",
         "https://*.oraclecloud.com/*",
+        "https://*.taleo.net/*",
         "https://*.applytojob.com/*",
         "https://*.successfactors.com/*",
         "https://*.successfactors.eu/*",

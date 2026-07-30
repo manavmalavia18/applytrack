@@ -696,6 +696,7 @@
     // SPA boards often hydrate the title after first paint
     if (
       parsed?.source === "greenhouse" ||
+      parsed?.source === "taleo" ||
       parsed?.source === "successfactors" ||
       parsed?.source === "paylocity" ||
       parsed?.source === "ultipro" ||
@@ -706,6 +707,7 @@
       parsed?.source === "workable" ||
       parsed?.source === "adp" ||
       location.hostname.includes("greenhouse") ||
+      location.hostname.includes("taleo") ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||
