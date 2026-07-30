@@ -248,6 +248,21 @@ const ApplyTrackATS = {
     },
   },
 
+  lever: {
+    scrubCompany(t) {
+      const c = (t || "").trim().replace(/\s+/g, " ");
+      const compact = c.replace(/\s/g, "");
+      if (/^atomcomputing$/i.test(compact) || /^atom\s*computing$/i.test(c)) {
+        return "Atom Computing";
+      }
+      return c;
+    },
+    isWeakCompany(t) {
+      // Never use Lever CDN host labels as the employer
+      return /^(jobs|lever|www)$/i.test((t || "").trim());
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

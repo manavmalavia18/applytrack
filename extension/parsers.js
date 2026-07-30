@@ -747,16 +747,103 @@ function parseGreenhouse() {
 }
 
 function parseLever() {
-  const role = textOf(document.querySelector(".posting-headline h2, h2")) || "";
-  const company =
-    textOf(document.querySelector(".main-header-logo img[alt]")) ||
-    location.hostname.split(".")[0] ||
-    "";
+  // https://jobs.lever.co/atomcomputing/e6db0921-3a50-4c45-931a-deffbfa8d826/apply
+  // Company is the first path segment (board slug), never hostname "jobs".
+  const parts = location.pathname.split("/").filter(Boolean);
+  const reservedSeg = /^(jobs|apply|postings?|lever)$/i;
+  const companySlug =
+    parts[0] && !reservedSeg.test(parts[0]) && !/^[0-9a-f-]{8,}$/i.test(parts[0])
+      ? parts[0]
+      : "";
+  const jobId =
+    parts.find((p) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p),
+    ) || "";
+
+  const bad =
+    /^(apply|apply for this job|submit application|careers?|jobs?|home|sign in|lever)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (isWeakRole(t, "lever")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  function titleCaseSlug(slug) {
+    return (slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  const role = pick(
+    textOf(document.querySelector(".posting-headline h2")),
+    textOf(document.querySelector(".posting-headline h1")),
+    textOf(document.querySelector("h2")),
+    textOf(document.querySelector("h1")),
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+  );
+
+  // Prefer page brand (logo / site name), then title-cased path slug — never host label
+  let company = "";
+  const logo = textOf(
+    document.querySelector(
+      ".main-header-logo img[alt], header img[alt], .logo img[alt], a[class*='logo'] img[alt]",
+    ),
+  );
+  if (
+    logo &&
+    logo.length > 1 &&
+    logo.length < 60 &&
+    !/^logo$/i.test(logo) &&
+    !/lever|image/i.test(logo) &&
+    !isWeakCompany(logo, "lever")
+  ) {
+    company = scrubCompany(logo, "lever");
+  }
+
+  const og = document
+    .querySelector('meta[property="og:site_name"]')
+    ?.getAttribute("content")
+    ?.trim();
+  if ((!company || isWeakCompany(company, "lever")) && og && !isWeakCompany(og, "lever")) {
+    company = scrubCompany(og, "lever");
+  }
+
+  // "Software Engineer - Atom Computing" style titles
+  if (!company || isWeakCompany(company, "lever")) {
+    const fromTitle = document.title.match(/\s[-–—]\s+(.+)$/)?.[1]?.trim();
+    if (
+      fromTitle &&
+      fromTitle.length < 60 &&
+      !isWeakRole(fromTitle, "lever") &&
+      !isWeakCompany(fromTitle, "lever")
+    ) {
+      company = scrubCompany(fromTitle, "lever");
+    }
+  }
+
+  if (!company || isWeakCompany(company, "lever")) {
+    company = scrubCompany(titleCaseSlug(companySlug), "lever");
+  }
+
+  company = scrubCompany(company, "lever") || company;
+
+  const listingUrl = location.href
+    .split("?")[0]
+    .split("#")[0]
+    .replace(/\/apply\/?$/i, "")
+    .replace(/\/+$/, "");
+
   return {
-    company: company.replace(/^Logo$/i, location.hostname),
-    role,
-    url: location.href,
-    jobKey: null,
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: listingUrl || location.href.split("?")[0],
+    jobKey: jobId ? `lever:${jobId}` : null,
     source: "lever",
   };
 }
