@@ -15,15 +15,20 @@ const ApplyTrackATS = {
   workday: {
     /** "Full Stack Software Engineer II R 108283 1" → title only */
     scrubRole(t) {
-      return (t || "")
-        .trim()
-        .replace(/\s+/g, " ")
-        .replace(
-          /\s*[_\-–—]?\s*((?:JR|R|REQ)[-_\s]?\d{3,}(?:[-_\s]\d+)?)\s*$/i,
-          "",
-        )
-        .replace(/\s+/g, " ")
-        .trim();
+      let s = (t || "").trim().replace(/\s+/g, " ");
+      // Trailing Workday req in any common shape: R-108283, R 108283 1, _R-108283-1
+      for (let i = 0; i < 3; i++) {
+        const next = s
+          .replace(
+            /\s*[_\-–—]?\s*\b((?:JR|R|REQ)[-_\s]?\d{3,}(?:[-_\s]\d+)*)\s*$/i,
+            "",
+          )
+          .replace(/\s+/g, " ")
+          .trim();
+        if (next === s) break;
+        s = next;
+      }
+      return s;
     },
     isWeakRole(t) {
       return /^(start your apply|autofil|my applications|job description|workday|next|submit|review)$/i.test(

@@ -551,9 +551,11 @@ function parseWorkday() {
     .replace(/\/apply\/?.*$/i, "")
     .replace(/\/+$/, "");
 
+  const finalRole = stripReqFromRole(role || fromPath || "Unknown role");
+
   return {
     company: company || "Workday",
-    role: role || fromPath || "Unknown role",
+    role: finalRole || "Unknown role",
     url: listingUrl || location.href.split("?")[0],
     jobKey,
     reqId: reqId || "",
@@ -1588,11 +1590,26 @@ function mergeRememberedJob(parsed, source) {
 
     // FROZEN: once solid, ignore page parse for identity fields
     if (isSolidLock(prev, lockSrc)) {
+      // Re-scrub locked role (cleans older locks that still had "R 108283" glued on)
+      const cleanRole = scrubRole(prev.role, lockSrc) || prev.role;
+      const cleanCo = scrubCompany(prev.company, lockSrc) || prev.company;
+      if (cleanRole !== prev.role || cleanCo !== prev.company) {
+        try {
+          writeJobCtx({
+            ...prev,
+            role: cleanRole,
+            company: cleanCo,
+            reqId: prev.reqId || parsed.reqId || "",
+          });
+        } catch {
+          /* ignore */
+        }
+      }
       return {
         ...parsed,
         jobKey: prev.jobKey,
-        role: prev.role,
-        company: prev.company,
+        role: cleanRole,
+        company: cleanCo,
         reqId: prev.reqId || parsed.reqId || "",
         url: prev.url || parsed.url,
         source: prev.source || parsed.source || src,
@@ -1639,14 +1656,29 @@ function resolveJobPayload(parsed) {
   }
   const prev = readBestJobCtx(merged, merged.source);
   if (prev && isSolidLock(prev, prev.source || merged.source)) {
+    const lockSrc = prev.source || merged.source;
+    const cleanRole = scrubRole(prev.role, lockSrc) || prev.role;
+    const cleanCo = scrubCompany(prev.company, lockSrc) || prev.company;
+    if (cleanRole !== prev.role || cleanCo !== prev.company) {
+      try {
+        writeJobCtx({
+          ...prev,
+          role: cleanRole,
+          company: cleanCo,
+          reqId: prev.reqId || merged.reqId || "",
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     return {
       ...merged,
       jobKey: prev.jobKey,
-      role: prev.role,
-      company: prev.company,
+      role: cleanRole,
+      company: cleanCo,
       reqId: prev.reqId || merged.reqId || "",
       url: prev.url || merged.url,
-      source: prev.source || merged.source,
+      source: lockSrc,
       locked: true,
     };
   }
