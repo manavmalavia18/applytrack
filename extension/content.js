@@ -1,8 +1,8 @@
 (function () {
   "use strict";
 
-  // Allow re-entry if a previous boot never mounted UI (e.g. page wasn't supported yet,
-  // or extension reloaded and "Show on this tab" re-injects).
+  // Allow re-entry if a previous boot never mounted UI (unsupported ATS at first load,
+  // extension updated, or "Show on this tab" re-injects).
   if (window.__applytrackBooted) {
     if (
       document.getElementById("applytrack-host") ||
@@ -11,7 +11,6 @@
       return;
     }
   }
-  window.__applytrackBooted = true;
 
   // UI only on the top frame — iframes still get click-to-log below.
   const isTop = window === window.top;
@@ -32,19 +31,38 @@
     }
   }
 
+  function markBooted() {
+    window.__applytrackBooted = true;
+  }
+
+  function clearBootedIfNoUi() {
+    if (!document.getElementById("applytrack-host") && typeof window.__applytrackOpen !== "function") {
+      try {
+        delete window.__applytrackBooted;
+      } catch {
+        window.__applytrackBooted = false;
+      }
+    }
+  }
+
   if (!supported()) {
     if (maybeSupportedSoon()) {
+      markBooted();
       const wait = setInterval(() => {
         if (supported()) {
           clearInterval(wait);
           start();
         }
       }, 800);
-      setTimeout(() => clearInterval(wait), 10000);
+      setTimeout(() => {
+        clearInterval(wait);
+        clearBootedIfNoUi();
+      }, 12000);
     }
     return;
   }
 
+  markBooted();
   start();
 
   function start() {

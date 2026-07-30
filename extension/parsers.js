@@ -106,10 +106,8 @@ function isSupportedJobPage() {
   ) {
     return true;
   }
-  // BambooHR careers
-  if (host.includes("bamboohr.com") && /\/careers/i.test(location.pathname)) {
-    return true;
-  }
+  // BambooHR careers (and apply flow under /careers)
+  if (host.includes("bamboohr.com")) return true;
   // ADP / EnterTimeOnline career portals
   if (host.includes("entertimeonline.com")) return true;
   if (host.includes("adp.com") && /careers|ShowJob|recruit/i.test(location.href)) return true;

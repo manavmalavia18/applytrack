@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.5.31",
+  "version": "0.5.32",
   "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
