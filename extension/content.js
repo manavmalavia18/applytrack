@@ -697,6 +697,7 @@
     if (
       parsed?.source === "greenhouse" ||
       parsed?.source === "taleo" ||
+      parsed?.source === "dayforce" ||
       parsed?.source === "successfactors" ||
       parsed?.source === "paylocity" ||
       parsed?.source === "ultipro" ||
@@ -708,6 +709,7 @@
       parsed?.source === "adp" ||
       location.hostname.includes("greenhouse") ||
       location.hostname.includes("taleo") ||
+      location.hostname.includes("dayforce") ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||

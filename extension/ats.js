@@ -87,6 +87,26 @@ const ApplyTrackATS = {
     },
   },
 
+  dayforce: {
+    scrubCompany(t) {
+      const c = (t || "").trim().replace(/\s+/g, " ");
+      const compact = c.replace(/\s/g, "");
+      // Broken header alts like "Bank Mid 200"
+      if (/^bankmid\d+$/i.test(compact) || /^bank\s*mid\s*\d+$/i.test(c)) return "Bank Midwest";
+      if (/^bankmidwest$/i.test(compact) || /^bank\s*midwest$/i.test(c)) return "Bank Midwest";
+      if (/^nbhbank$/i.test(compact) || /^nbh\s*bank$/i.test(c)) return "NBH Bank";
+      return c;
+    },
+    isWeakRole(t) {
+      return /^(search jobs|sign in|careers|job description|apply|save|share|posted|this is a virtual position)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^dayforce$/i.test(t) || /^bank\s*mid\s*\d+$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

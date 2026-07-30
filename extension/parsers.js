@@ -52,6 +52,8 @@ function isNoisePage() {
     host.includes("bamboohr.com") ||
     host.includes("workable.com") ||
     host.includes("taleo.net") ||
+    host.includes("dayforcehcm.com") ||
+    host.includes("dayforce.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -92,6 +94,13 @@ function isSupportedJobPage() {
   if (
     host.includes("taleo.net") &&
     /careersection|jobdetail|requisition|reqNo=|application\.jss/i.test(location.href)
+  ) {
+    return true;
+  }
+  // Dayforce HCM job boards
+  if (
+    (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) &&
+    /\/jobs\/|\/job\/|Apply|Candidate/i.test(location.href)
   ) {
     return true;
   }
@@ -182,9 +191,88 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com/i.test(
     location.href,
   );
+}
+
+function parseDayforce() {
+  // https://jobs.dayforcehcm.com/en-US/nbhbank/bankmidwest/jobs/32164
+  const parts = location.pathname.split("/").filter(Boolean);
+  const jobsIdx = parts.findIndex((p) => /^jobs?$/i.test(p));
+  const jobId =
+    (jobsIdx >= 0 && parts[jobsIdx + 1] && /^\d+$/.test(parts[jobsIdx + 1])
+      ? parts[jobsIdx + 1]
+      : "") ||
+    location.pathname.match(/\/jobs\/(\d+)/i)?.[1] ||
+    "";
+  const siteSlug = jobsIdx >= 1 ? parts[jobsIdx - 1] : "";
+  const clientSlug = jobsIdx >= 2 ? parts[jobsIdx - 2] : "";
+
+  const bad =
+    /^(search jobs|sign in|careers|job description|apply|save|share|posted|home|english|united states)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 5 || bad.test(t)) continue;
+      if (isWeakRole(t, "dayforce")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [data-automation-id*='jobTitle']")),
+    textOf(document.querySelector("[class*='JobTitle']")),
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+  );
+
+  function titleCaseSlug(slug) {
+    return (slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  // Prefer site brand (bankmidwest) over client code (nbhbank)
+  let company = scrubCompany(titleCaseSlug(siteSlug), "dayforce");
+  if (!company || isWeakCompany(company, "dayforce")) {
+    company = scrubCompany(titleCaseSlug(clientSlug), "dayforce");
+  }
+
+  const fromLogo = textOf(
+    document.querySelector("header img[alt], a[href*='careers'] img[alt], .logo img[alt]"),
+  );
+  if (
+    fromLogo &&
+    fromLogo.length < 60 &&
+    !isWeakCompany(fromLogo, "dayforce") &&
+    !/logo|image|dayforce/i.test(fromLogo)
+  ) {
+    company = scrubCompany(fromLogo, "dayforce");
+  }
+
+  // Description often names the employer (NBH Bank)
+  if (!company || isWeakCompany(company, "dayforce")) {
+    const body = (document.body?.innerText || "").slice(0, 3000);
+    if (/\bNBH Bank\b/i.test(body)) company = "NBH Bank";
+    else if (/\bBank Midwest\b/i.test(body)) company = "Bank Midwest";
+  }
+  company = scrubCompany(company, "dayforce") || company;
+
+  const jobKey = jobId
+    ? `dayforce:${(clientSlug || siteSlug || "job").toLowerCase()}:${jobId}`
+    : null;
+
+  return {
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: location.href.split("?")[0].split("#")[0],
+    jobKey,
+    source: "dayforce",
+  };
 }
 
 function parseTaleo() {
@@ -1781,6 +1869,11 @@ function parseJobPage() {
     /careersection|jobdetail|requisition|reqNo=|application\.jss/i.test(location.href)
   ) {
     parsed = parseTaleo();
+  } else if (
+    (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) &&
+    /\/jobs\/|\/job\/|Apply|Candidate/i.test(location.href)
+  ) {
+    parsed = parseDayforce();
   } else {
     parsed = {
       company: "",

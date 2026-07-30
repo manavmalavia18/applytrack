@@ -133,6 +133,16 @@ export function normalizeJobUrl(raw: string): string {
         url.pathname.match(/\/jobdetail[^/]*\/(?:job\/)?(\d+)/i)?.[1];
       if (id) return `taleo:${id}`;
     }
+    if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const jobsIdx = parts.findIndex((p) => /^jobs?$/i.test(p));
+      const id =
+        (jobsIdx >= 0 && parts[jobsIdx + 1] && /^\d+$/.test(parts[jobsIdx + 1])
+          ? parts[jobsIdx + 1]
+          : "") || url.pathname.match(/\/jobs\/(\d+)/i)?.[1];
+      const client = jobsIdx >= 2 ? parts[jobsIdx - 2] : "";
+      if (id) return `dayforce:${(client || "job").toLowerCase()}:${id}`;
+    }
     url.searchParams.sort();
     return `${host}${url.pathname}${url.search}`.toLowerCase();
   } catch {
@@ -207,6 +217,7 @@ export function detectSource(raw: string): string {
     if (host.includes("entertimeonline.com") || host.includes("adp.com")) return "adp";
     if (host.includes("oraclecloud.com")) return "oracle";
     if (host.includes("taleo.net")) return "taleo";
+    if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) return "dayforce";
     return host.split(".")[0] || "web";
   } catch {
     return "manual";
