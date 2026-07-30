@@ -97,11 +97,8 @@ function isSupportedJobPage() {
   ) {
     return true;
   }
-  // Dayforce HCM job boards
-  if (
-    (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) &&
-    /\/jobs\/|\/job\/|Apply|Candidate/i.test(location.href)
-  ) {
+  // Dayforce HCM job boards + apply wizard
+  if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) {
     return true;
   }
   // JazzHR
@@ -210,7 +207,7 @@ function parseDayforce() {
   const clientSlug = jobsIdx >= 2 ? parts[jobsIdx - 2] : "";
 
   const bad =
-    /^(search jobs|sign in|careers|job description|apply|save|share|posted|home|english|united states)$/i;
+    /^(search jobs|sign in|careers|job description|apply|save|share|posted|home|english|united states|manual application|manual apply)$/i;
 
   function pick(...cands) {
     for (const raw of cands) {
@@ -228,6 +225,7 @@ function parseDayforce() {
     textOf(document.querySelector("[class*='JobTitle']")),
     document.title.split(/[|–—]/).map((s) => s.trim())[0],
   );
+  // Apply wizard pages titled "Manual Application" — never treat as the role
 
   function titleCaseSlug(slug) {
     return (slug || "")
@@ -1484,10 +1482,19 @@ function readBestJobCtx(parsed, source) {
   const src = source || parsed?.source;
   let prev = parsed?.jobKey ? readJobCtx(`applytrack:job:${parsed.jobKey}`) : null;
   if (!prev && src) prev = readJobCtx(`applytrack:ctx:${src}`);
-  // Wizard steps often drop the id — reuse latest only for the same ATS
+  // Wizard steps often drop the id / switch to "web" — reuse solid latest
   if (!prev) {
     const latest = readJobCtx("applytrack:job:latest");
-    if (latest && (!src || latest.source === src)) prev = latest;
+    if (latest) {
+      const currWeak =
+        !parsed?.role || isWeakRole(parsed.role, src) || isWeakRole(parsed.role, latest.source);
+      const currNoKey = !parsed?.jobKey;
+      if (isSolidLock(latest, latest.source) && (currWeak || currNoKey || !src || src === "web")) {
+        prev = latest;
+      } else if (!src || latest.source === src) {
+        prev = latest;
+      }
+    }
   }
   return prev;
 }
@@ -1545,14 +1552,17 @@ function mergeRememberedJob(parsed, source) {
     const src = source || parsed.source;
     const prev = readBestJobCtx(parsed, src);
     if (!prev) return parsed;
+    const lockSrc = prev.source || src;
 
-    // Different posting ids — don't mix (page with no id can inherit same-source lock)
+    // Different posting ids — don't mix, unless current title is junk (wizard chrome)
     if (parsed.jobKey && prev.jobKey && parsed.jobKey !== prev.jobKey) {
-      return parsed;
+      const currWeak =
+        !parsed.role || isWeakRole(parsed.role, src) || isWeakRole(parsed.role, lockSrc);
+      if (!(isSolidLock(prev, lockSrc) && currWeak)) return parsed;
     }
 
     // FROZEN: once solid, ignore page parse for identity fields
-    if (isSolidLock(prev, src)) {
+    if (isSolidLock(prev, lockSrc)) {
       return {
         ...parsed,
         jobKey: prev.jobKey,
@@ -1565,7 +1575,7 @@ function mergeRememberedJob(parsed, source) {
     }
 
     // Incomplete lock — fill gaps / upgrade weak fields only
-    const prevRoleOk = prev.role && !isWeakRole(prev.role, src);
+    const prevRoleOk = prev.role && !isWeakRole(prev.role, lockSrc);
     const nextRoleOk = parsed.role && !isWeakRole(parsed.role, src);
     const role = prevRoleOk
       ? prev.role
@@ -1573,9 +1583,9 @@ function mergeRememberedJob(parsed, source) {
         ? scrubRole(parsed.role, src)
         : prev.role || parsed.role;
 
-    const prevCo = scrubCompany(prev.company, src);
+    const prevCo = scrubCompany(prev.company, lockSrc);
     const nextCo = scrubCompany(parsed.company, src);
-    const prevCoOk = prevCo && !isWeakCompany(prevCo, src);
+    const prevCoOk = prevCo && !isWeakCompany(prevCo, lockSrc);
     const nextCoOk = nextCo && !isWeakCompany(nextCo, src);
     const company = prevCoOk ? prevCo : nextCoOk ? nextCo : nextCo || prevCo || parsed.company;
 
@@ -1585,7 +1595,7 @@ function mergeRememberedJob(parsed, source) {
       role,
       company,
       url: prev.url || parsed.url,
-      source: parsed.source || prev.source || src,
+      source: prev.source || parsed.source || src,
     };
   } catch {
     return parsed;
@@ -1597,10 +1607,12 @@ function resolveJobPayload(parsed) {
   if (!parsed) return parsed;
   const normalized = typeof normalizeParsed === "function" ? normalizeParsed(parsed) : parsed;
   const merged = mergeRememberedJob(normalized, normalized.source);
-  rememberJob(merged);
-  // Re-read after remember so callers always see the frozen solid lock
+  // Never let a weak page parse write over / replace a solid lock
+  if (!isWeakRole(merged.role, merged.source)) {
+    rememberJob(merged);
+  }
   const prev = readBestJobCtx(merged, merged.source);
-  if (prev && isSolidLock(prev, merged.source)) {
+  if (prev && isSolidLock(prev, prev.source || merged.source)) {
     return {
       ...merged,
       jobKey: prev.jobKey,
@@ -1615,31 +1627,66 @@ function resolveJobPayload(parsed) {
 }
 
 /**
- * Lock company/role from a manual edit in the side panel.
- * Force-overwrites even a solid lock (user intent).
+ * Apply panel edits. Never destroy a solid lock with wizard junk
+ * (e.g. Dayforce "Manual Application").
  */
 function lockManualJob(company, role, base) {
-  const src = base?.source;
+  const prev = base || {};
+  const src = prev.source;
   const c = (company || "").trim();
   const r = (role || "").trim();
-  if (!r || isWeakRole(r, src)) return base || null;
-  const prev = base || {};
+  const existing =
+    (prev.jobKey && readJobCtx(`applytrack:job:${prev.jobKey}`)) ||
+    readBestJobCtx(prev, src);
+
+  // Empty / junk typed values → keep solid lock untouched
+  if (!r || isWeakRole(r, src) || isWeakRole(r, existing?.source)) {
+    if (existing && isSolidLock(existing, existing.source)) {
+      return {
+        ...prev,
+        jobKey: existing.jobKey,
+        role: existing.role,
+        company: existing.company,
+        url: existing.url || prev.url,
+        source: existing.source || src,
+        locked: true,
+      };
+    }
+    return base || null;
+  }
+
   const jobKey =
     prev.jobKey ||
+    existing?.jobKey ||
     `manual:${(location.href || "").split("#")[0]}`.slice(0, 220);
-  const syntheticKey = !prev.jobKey || String(jobKey).startsWith("manual:");
+  const solid = existing && isSolidLock(existing, existing.source);
+  // Same as locked values — no rewrite
+  if (solid && r === existing.role && (!c || c === existing.company)) {
+    return {
+      ...prev,
+      jobKey: existing.jobKey,
+      role: existing.role,
+      company: existing.company,
+      url: existing.url || prev.url,
+      source: existing.source || src,
+      locked: true,
+    };
+  }
+
+  const syntheticKey = !jobKey || String(jobKey).startsWith("manual:");
   const next = {
     ...prev,
-    company: c || prev.company || "Unknown",
+    company: c || existing?.company || prev.company || "Unknown",
     role: r,
     jobKey,
-    url: prev.url || location.href,
-    source: prev.source || "manual",
+    url: existing?.url || prev.url || location.href,
+    source: existing?.source || prev.source || "manual",
     locked: true,
     manual: syntheticKey,
   };
   try {
-    rememberJob(next, { force: true });
+    // Only force when the user typed a real, different title
+    rememberJob(next, { force: solid ? r !== existing.role || (c && c !== existing.company) : true });
   } catch {
     try {
       writeJobCtx(next);
@@ -1869,10 +1916,7 @@ function parseJobPage() {
     /careersection|jobdetail|requisition|reqNo=|application\.jss/i.test(location.href)
   ) {
     parsed = parseTaleo();
-  } else if (
-    (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) &&
-    /\/jobs\/|\/job\/|Apply|Candidate/i.test(location.href)
-  ) {
+  } else if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) {
     parsed = parseDayforce();
   } else {
     parsed = {
@@ -1884,8 +1928,8 @@ function parseJobPage() {
     };
   }
 
-  // Cache on first/best parse — later pages reuse this, never overwrite with form chrome
-  if (parsed?.source && parsed.source !== "web") {
+  // Always merge solid locks — including weak/web wizard pages
+  if (typeof resolveJobPayload === "function") {
     parsed = resolveJobPayload(parsed);
   }
   return parsed;

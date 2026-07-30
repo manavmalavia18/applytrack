@@ -582,7 +582,8 @@
         typeof resolveJobPayload === "function"
           ? resolveJobPayload(parsed || parseJobPage())
           : parsed || parseJobPage();
-      // Prefer values typed in the panel (manual entry / corrections)
+      // Panel fields: only override when the user typed a real title.
+      // Never let wizard chrome ("Manual Application") force-overwrite a solid lock.
       const roleIn = body.querySelector("#role");
       const companyIn = body.querySelector("#company");
       if (roleIn || companyIn) {
@@ -590,9 +591,19 @@
           parsed =
             lockManualJob(companyIn?.value, roleIn?.value, parsed) || parsed;
         } else {
-          if (roleIn?.value.trim()) parsed.role = roleIn.value.trim();
-          if (companyIn?.value.trim()) parsed.company = companyIn.value.trim();
+          const typedRole = roleIn?.value.trim() || "";
+          const typedCo = companyIn?.value.trim() || "";
+          if (typedRole && !(typeof isWeakRole === "function" && isWeakRole(typedRole, parsed?.source))) {
+            parsed.role = typedRole;
+          }
+          if (typedCo && !(typeof isWeakCompany === "function" && isWeakCompany(typedCo, parsed?.source))) {
+            parsed.company = typedCo;
+          }
         }
+      }
+      // Re-assert solid lock after panel merge
+      if (typeof resolveJobPayload === "function") {
+        parsed = resolveJobPayload(parsed);
       }
       // Oracle (and similar): never save profile pages without a real job id
       // unless the user typed a title manually.
@@ -618,7 +629,11 @@
         url: parsed.url || location.href,
         status,
         newCycle: Boolean(opts.newCycle),
-        ...(parsed.manual ? { manual: true, source: "manual" } : {}),
+        // Keep ATS source — never flip a locked Dayforce/etc. row to "manual"
+        // unless there was never an ATS jobKey.
+        ...(parsed.manual && (!parsed.jobKey || String(parsed.jobKey).startsWith("manual:"))
+          ? { manual: true, source: "manual" }
+          : {}),
       });
       busy = false;
       if (!res?.ok) {

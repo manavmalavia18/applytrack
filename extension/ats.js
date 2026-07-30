@@ -98,7 +98,7 @@ const ApplyTrackATS = {
       return c;
     },
     isWeakRole(t) {
-      return /^(search jobs|sign in|careers|job description|apply|save|share|posted|this is a virtual position)$/i.test(
+      return /^(search jobs|sign in|careers|job description|apply|save|share|posted|this is a virtual position|manual application|manual apply|application form|candidate profile)$/i.test(
         t,
       );
     },
@@ -126,7 +126,7 @@ function isWeakRoleBase(role) {
   ) {
     return true;
   }
-  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center)\b/i.test(
+  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center|manual application|manual apply|start (your )?application|submit application)\b/i.test(
     t,
   );
 }

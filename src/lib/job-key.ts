@@ -175,7 +175,7 @@ export function isJunkRole(role: string): boolean {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
   if (/^you have applied for\b/i.test(t)) return true;
-  return /^(enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review( your application)?|application( form)?|my profile|work summary|demographics|preferences|thank you|candidate|profile|privacy agreement)$/i.test(
+  return /^(enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review( your application)?|application( form)?|my profile|work summary|demographics|preferences|thank you|candidate|profile|privacy agreement|manual application|manual apply)$/i.test(
     t,
   );
 }
