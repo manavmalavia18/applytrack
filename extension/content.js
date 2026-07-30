@@ -1,19 +1,10 @@
 (function () {
   "use strict";
 
-  // Allow re-entry if a previous boot never mounted UI (unsupported ATS at first load,
-  // extension updated, or "Show on this tab" re-injects).
-  if (window.__applytrackBooted) {
-    if (
-      document.getElementById("applytrack-host") ||
-      typeof window.__applytrackOpen === "function"
-    ) {
-      return;
-    }
-  }
-
   // UI only on the top frame — iframes still get click-to-log below.
   const isTop = window === window.top;
+  let uiStarted = false;
+  let autoStarted = false;
 
   function supported() {
     try {
@@ -31,17 +22,51 @@
     }
   }
 
+  function hasUi() {
+    return Boolean(document.getElementById("applytrack-host"));
+  }
+
   function markBooted() {
     window.__applytrackBooted = true;
   }
 
   function clearBootedIfNoUi() {
-    if (!document.getElementById("applytrack-host") && typeof window.__applytrackOpen !== "function") {
+    if (!hasUi()) {
+      uiStarted = false;
       try {
         delete window.__applytrackBooted;
       } catch {
         window.__applytrackBooted = false;
       }
+    }
+  }
+
+  // Allow re-entry if a previous boot never mounted UI (unsupported ATS at first load,
+  // extension updated, or "Show on this tab" re-injects).
+  if (window.__applytrackBooted && hasUi() && typeof window.__applytrackOpen === "function") {
+    return;
+  }
+  if (window.__applytrackBooted && !hasUi()) {
+    clearBootedIfNoUi();
+  }
+
+  function start() {
+    // Don't mount UI on error documents even if host looks like an ATS
+    if (!supported()) return;
+    markBooted();
+    try {
+      if (isTop && (!uiStarted || !hasUi())) {
+        uiStarted = true;
+        if (!hasUi()) startUi();
+      }
+      if (!autoStarted) {
+        autoStarted = true;
+        startAutoApply();
+      }
+    } catch (err) {
+      uiStarted = false;
+      clearBootedIfNoUi();
+      console.warn("[ApplyTrack] start failed", err);
     }
   }
 
@@ -59,17 +84,26 @@
         clearBootedIfNoUi();
       }, 12000);
     }
-    return;
+  } else {
+    start();
   }
 
-  markBooted();
-  start();
-
-  function start() {
-    // Don't mount UI on error documents even if host looks like an ATS
-    if (!supported()) return;
-    if (isTop) startUi();
-    startAutoApply();
+  // Self-heal: SPA navigations / failed boots / extension reloads that left no pill
+  if (isTop) {
+    let lastHealHref = location.href;
+    setInterval(() => {
+      if (!supported()) return;
+      if (hasUi()) {
+        lastHealHref = location.href;
+        return;
+      }
+      // Job page with no UI — remount (common after extension reload without tab refresh)
+      if (location.href !== lastHealHref || !window.__applytrackBooted) {
+        lastHealHref = location.href;
+      }
+      clearBootedIfNoUi();
+      start();
+    }, 1500);
   }
 
   function startUi() {
@@ -226,7 +260,9 @@
 
     try {
       chrome.storage.sync.get(["tabPos"], (cfg) => {
-        if (cfg.tabPos) applyTabPos(cfg.tabPos);
+        if (!cfg.tabPos) return;
+        // Wait a frame so offsetWidth is real (else clamp can push pill off-screen)
+        requestAnimationFrame(() => applyTabPos(cfg.tabPos));
       });
     } catch {
       /* ignore */
@@ -643,11 +679,23 @@
     // Expose for popup "Show on this tab"
     window.__applytrackOpen = () => setOpen(true);
 
-    parsed = parseJobPage();
+    try {
+      parsed = typeof parseJobPage === "function" ? parseJobPage() : null;
+    } catch (err) {
+      console.warn("[ApplyTrack] parseJobPage failed", err);
+      parsed = {
+        company: "",
+        role: document.title || "Job posting",
+        url: location.href,
+        jobKey: null,
+        source: "web",
+      };
+    }
     paintTab();
     void refresh(false);
-    // SuccessFactors / Paylocity often hydrate the title after load
+    // SPA boards often hydrate the title after first paint
     if (
+      parsed?.source === "greenhouse" ||
       parsed?.source === "successfactors" ||
       parsed?.source === "paylocity" ||
       parsed?.source === "ultipro" ||
@@ -657,6 +705,7 @@
       parsed?.source === "bamboohr" ||
       parsed?.source === "workable" ||
       parsed?.source === "adp" ||
+      location.hostname.includes("greenhouse") ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||

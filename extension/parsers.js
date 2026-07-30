@@ -74,8 +74,15 @@ function isSupportedJobPage() {
   const params = new URLSearchParams(location.search);
 
   if (host.includes("linkedin.com") && path.includes("/jobs")) return true;
-  // boards.greenhouse.io + job-boards.greenhouse.io + embeds
-  if (host.includes("greenhouse.io") || host.includes("greenhouse.com")) return true;
+  // boards.greenhouse.io + job-boards.greenhouse.io + embeds (always show UI)
+  if (
+    host === "job-boards.greenhouse.io" ||
+    host === "boards.greenhouse.io" ||
+    host.includes("greenhouse.io") ||
+    host.includes("greenhouse.com")
+  ) {
+    return true;
+  }
   if (host.includes("lever.co")) return true;
   if (host.includes("myworkdayjobs.com") || /workday\.com$/i.test(host)) return true;
   if (host.includes("ashbyhq.com")) return true;
