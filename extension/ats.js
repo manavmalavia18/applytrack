@@ -16,11 +16,11 @@ const ApplyTrackATS = {
     /** "Full Stack Software Engineer II R 108283 1" → title only */
     scrubRole(t) {
       let s = (t || "").trim().replace(/\s+/g, " ");
-      // Trailing Workday req in any common shape: R-108283, R 108283 1, _R-108283-1
+      // Trailing Workday req: R-108283, R 108283 1, _R-108283-1 (underscore has no \b)
       for (let i = 0; i < 3; i++) {
         const next = s
           .replace(
-            /\s*[_\-–—]?\s*\b((?:JR|R|REQ)[-_\s]?\d{3,}(?:[-_\s]\d+)*)\s*$/i,
+            /[\s_\-–—]*((?:JR|R|REQ)[-_\s]?\d{3,}(?:[-_\s]\d+)*)\s*$/i,
             "",
           )
           .replace(/\s+/g, " ")
