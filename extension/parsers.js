@@ -928,48 +928,78 @@ function parseUltiPro() {
 }
 
 function parsePaylocity() {
-  // https://recruiting.paylocity.com/Recruiting/Jobs/Details/4375436
+  // Details: /Recruiting/Jobs/Details/4369699
+  // Apply:   /Recruiting/Jobs/Apply/4369699  (title often harder — company header can win)
   const jobId =
     location.pathname.match(/\/Details\/(\d+)/i)?.[1] ||
-    location.pathname.match(/\/Jobs\/(\d+)/i)?.[1] ||
     location.pathname.match(/\/Apply\/(\d+)/i)?.[1] ||
+    location.pathname.match(/\/Jobs\/(\d+)/i)?.[1] ||
     new URLSearchParams(location.search).get("jobId") ||
     "";
 
   const bad =
-    /^(apply|all jobs|careers?|jobs?|home|sign in|log in|recruiting|thank you|share|description|why |the role|what you|hybrid|remote)\b/i;
+    /^(apply|all jobs|careers?|jobs?|home|sign in|log in|recruiting|thank you|share|description|why |the role|what you|hybrid|remote|step \d+|personal information|resume)\b/i;
+
+  function looksLikeCompanyName(t) {
+    if (!t) return false;
+    if (/\b(company|inc\.?|llc|ltd|corp\.?|corporation|group)\b/i.test(t)) return true;
+    if (/^(fervo|gravitate|paylocity)(\s+energy)?(\s+company)?$/i.test(t)) return true;
+    if (t === t.toUpperCase() && t.length > 4 && !/engineer|developer|analyst|manager/i.test(t)) {
+      return true;
+    }
+    return false;
+  }
 
   function pick(...cands) {
     for (const raw of cands) {
       const t = (raw || "").trim().replace(/\s+/g, " ");
-      if (!t || t.length < 5 || bad.test(t)) continue;
-      if (/^gravitate(\s+energy)?(\s+llc)?$/i.test(t)) continue;
+      if (!t || t.length < 3 || bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      if (looksLikeCompanyName(t)) continue;
       return t;
     }
     return "";
   }
 
-  // "Gravitate Energy LLC - Associate Technical Consultant"
   const titleBits = document.title.split(/\s+[-–|]\s+/).map((s) => s.trim()).filter(Boolean);
+  // Prefer "Company - Role" → Role; avoid using company-only titles as role
   const roleFromTitle =
-    titleBits.length >= 2 ? titleBits[titleBits.length - 1] : titleBits[0] || "";
+    titleBits.length >= 2
+      ? titleBits[titleBits.length - 1]
+      : looksLikeCompanyName(titleBits[0] || "")
+        ? ""
+        : titleBits[0] || "";
 
-  // Breadcrumb: "All Jobs> Associate Technical Consultant"
   const crumb = textOf(document.querySelector(".breadcrumb, [class*='breadcrumb'], nav"));
   const roleFromCrumb = crumb.includes(">")
     ? crumb.split(">").pop().trim()
     : "";
 
+  // Apply pages: title often sits above the location line ("Platform Engineer" / "Houston, TX")
+  const bodyTop = (document.body?.innerText || "").slice(0, 2500);
+  const roleNearLocation =
+    bodyTop.match(
+      /\n\s*([A-Z][^\n]{4,80})\s*\n\s*(?:[A-Za-z .]+,\s*[A-Z]{2}|Remote|Hybrid)/,
+    )?.[1]?.trim() || "";
+
+  const headingCandidates = [...document.querySelectorAll("h1, h2, h3, [class*='job'], [class*='title']")]
+    .map((n) => textOf(n))
+    .filter(Boolean);
+
+  // Prefer role-like headings (Engineer, etc.) over generic ones
+  const roleLike = headingCandidates.find((t) =>
+    /engineer|developer|scientist|analyst|consultant|manager|designer|architect|specialist/i.test(
+      t,
+    ),
+  );
+
   const role = pick(
-    textOf(document.querySelector("h1")),
-    textOf(document.querySelector("h2")),
-    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], [class*='JobName'], .job-title")),
+    roleLike,
+    roleNearLocation,
     roleFromCrumb,
     roleFromTitle,
-    // Visible heading near Apply button
-    [...document.querySelectorAll("h1, h2, h3, [class*='title']")]
-      .map((n) => textOf(n))
-      .find((t) => t && t.length > 8 && t.length < 120 && !bad.test(t) && !/^gravitate/i.test(t)),
+    ...headingCandidates,
+    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], [class*='JobName'], .job-title")),
   );
 
   let company =
@@ -978,25 +1008,48 @@ function parsePaylocity() {
   if (!company || /logo|paylocity|image/i.test(company) || company.length > 80) {
     company = "";
   }
-  if (!company && titleBits.length >= 2) {
-    company = titleBits[0];
-  }
-  const body = (document.body?.innerText || "").slice(0, 3000);
+  if (!company && titleBits.length >= 2) company = titleBits[0];
   if (!company) {
-    const m = body.match(/\b(Gravitate(?:\s+Energy(?:\s+LLC)?)?)\b/i);
+    const m = bodyTop.match(/\b(Fervo Energy(?: Company)?|Gravitate(?: Energy(?: LLC)?)?)\b/i);
     if (m) company = m[1];
   }
+  // ALL-CAPS logo word on Paylocity
+  if (!company) {
+    const caps = bodyTop.match(/\b([A-Z][A-Z0-9 &]{3,40})\b/);
+    if (caps && /ENERGY|FERVO|GRAVITATE/i.test(caps[1])) company = caps[1];
+  }
   if (!company) company = "Paylocity";
+  if (/^fervo(\s+energy)?(\s+company)?$/i.test(company.trim())) {
+    company = "Fervo Energy Company";
+  }
   if (/^gravitate$/i.test(company.trim())) company = "Gravitate Energy LLC";
-  // Normalize casing from ALL CAPS logo text
   if (/^GRAVITATE/i.test(company) && company === company.toUpperCase()) {
     company = "Gravitate Energy LLC";
   }
+  if (/^FERVO/i.test(company) && company === company.toUpperCase()) {
+    company = "Fervo Energy Company";
+  }
+
+  // Never keep role === company
+  let finalRole = role || roleFromTitle || "Unknown role";
+  if (
+    finalRole &&
+    company &&
+    finalRole.replace(/\s+/g, "").toLowerCase() === company.replace(/\s+/g, "").toLowerCase()
+  ) {
+    finalRole = "Unknown role";
+  }
+  if (looksLikeCompanyName(finalRole)) finalRole = "Unknown role";
+
+  // Canonical listing URL so Apply + Details share one lock key
+  const listingUrl = jobId
+    ? `${location.origin}/Recruiting/Jobs/Details/${jobId}`
+    : location.href.split("?")[0];
 
   return {
     company,
-    role: role || roleFromTitle || "Unknown role",
-    url: location.href.split("?")[0],
+    role: finalRole,
+    url: listingUrl,
     jobKey: jobId ? `paylocity:${jobId}` : null,
     source: "paylocity",
   };
@@ -1202,15 +1255,23 @@ function mergeRememberedJob(parsed, source) {
     }
 
     const useLocked = Boolean(prev.locked && !isWeakRole(prev.role));
+    // Don't keep a lock where role is just the company name
+    const lockedIsCompany =
+      prev.role &&
+      prev.company &&
+      prev.role.replace(/\s+/g, "").toLowerCase() === prev.company.replace(/\s+/g, "").toLowerCase();
+    const keepLock = useLocked && !lockedIsCompany;
     return {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
-      role: useLocked
+      role: keepLock
         ? prev.role
         : isWeakRole(parsed.role)
-          ? prev.role || parsed.role
+          ? prev.role && !isWeakRole(prev.role) && !lockedIsCompany
+            ? prev.role
+            : parsed.role
           : parsed.role,
-      company: useLocked
+      company: keepLock
         ? prev.company || parsed.company
         : isWeakCompany(parsed.company)
           ? prev.company || parsed.company
