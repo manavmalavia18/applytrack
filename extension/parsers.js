@@ -1268,6 +1268,8 @@ function isWeakRole(role) {
   ) {
     return true;
   }
+  // Tab title leftovers: "… - GM Financial United States Careers"
+  if (/\bcareers?\s*$/i.test(t)) return true;
   // Company + country (e.g. "GM Financial United States") — not a job title
   if (
     /\b(united states|united kingdom|canada|australia|germany|india)\s*$/i.test(t) &&
@@ -1281,6 +1283,14 @@ function isWeakRole(role) {
   return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center)\b/i.test(
     t,
   );
+}
+
+function stripCompanyRegion(company) {
+  return (company || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*,?\s*(united states|united kingdom|usa|uk|canada|australia|india|germany)\s*$/i, "")
+    .trim();
 }
 
 function isWeakCompany(company) {
@@ -1396,12 +1406,17 @@ function mergeRememberedJob(parsed, source) {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
       role: preferPrevRole ? prev.role : parsed.role,
-      company:
-        keepLock && !isWeakCompany(prev.company)
-          ? prev.company
-          : isWeakCompany(parsed.company)
-            ? prev.company || parsed.company
-            : parsed.company,
+      company: (() => {
+        const prevCo = stripCompanyRegion(prev.company);
+        const nextCo = stripCompanyRegion(parsed.company);
+        if (keepLock && !isWeakCompany(prevCo)) {
+          // Upgrade "GM Financial United States" → "GM Financial" when page has cleaner brand
+          if (nextCo && nextCo.length < prevCo.length && prev.company !== prevCo) return nextCo;
+          return prevCo || prev.company;
+        }
+        if (isWeakCompany(nextCo)) return prevCo || nextCo || prev.company || parsed.company;
+        return nextCo || prevCo || parsed.company;
+      })(),
       // Keep the original listing URL from first capture
       url: prev.url || parsed.url,
       source: parsed.source || prev.source || source,
@@ -1494,9 +1509,20 @@ function parseOracleCloud() {
   const badShell =
     /^(apply now|view more jobs|job information|job description|hello|careers?|home|sign in|log in|work summary|my applications|info and alerts|personal info|candidate|search jobs|be\s)/i;
 
+  /** Drop tab-title chrome: "Role - GM Financial United States Careers" → "Role" */
+  function scrubOracleRole(t) {
+    return (t || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/\s*[-–—|]\s+.+?\s+careers?\s*$/i, "")
+      .replace(/\s*[-–—|]\s+[^|–—]+?\s+united states\s*$/i, "")
+      .trim();
+  }
+
   function looksLikeRole(t) {
-    const s = (t || "").trim().replace(/\s+/g, " ");
+    const s = scrubOracleRole(t);
     if (!s || s.length < 8 || badShell.test(s)) return false;
+    if (/\bcareers?\s*$/i.test(s)) return false;
     if (typeof isWeakRole === "function" && isWeakRole(s)) return false;
     return true;
   }
@@ -1507,14 +1533,16 @@ function parseOracleCloud() {
       n += 80;
     }
     if (/\b(ii|iii|iv|sr|senior|junior|staff|principal)\b/i.test(t)) n += 20;
+    // Prefer page headings over bloated document.title
+    if (/\bcareers?\b/i.test(t) || /\bunited states\b/i.test(t)) n -= 100;
     return n;
   }
 
   function pickRole(...cands) {
     let best = "";
-    let bestScore = 0;
+    let bestScore = -1e9;
     for (const raw of cands) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
+      const t = scrubOracleRole(raw);
       if (!looksLikeRole(t)) continue;
       const sc = scoreRole(t);
       if (sc > bestScore) {
@@ -1542,9 +1570,8 @@ function parseOracleCloud() {
       ),
     ),
     ...headingTexts,
-    // Only split title on | / emdash — never on " - " inside the job name
+    // Only split on | / emdash — never on " - " inside the job name
     document.title.split(/[|–—]/).map((s) => s.trim())[0],
-    document.title.trim(),
   );
 
   function cleanCompanyName(t) {
@@ -1607,11 +1634,9 @@ function parseOracleCloud() {
     }
   }
 
-  // If role still empty but company-shaped string was in title area, leave role unknown
-  // (manual entry / later SPA paint can fill it; do not lock host junk)
   return {
-    company: company || "Unknown",
-    role: role || "Unknown role",
+    company: stripCompanyRegion(company) || company || "Unknown",
+    role: scrubOracleRole(role) || role || "Unknown role",
     url: location.href.split("?")[0],
     jobKey: jobId ? `oracle:${jobId}` : null,
     source: "oracle",
