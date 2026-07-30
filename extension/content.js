@@ -837,12 +837,32 @@
         .replace(/\s+/g, " ");
     }
 
-    function pageText() {
-      return `${document.title} ${(document.body?.innerText || "").slice(0, 4000)}`;
+    function pageText(limit = 4000) {
+      return `${document.title} ${(document.body?.innerText || "").slice(0, limit)}`;
+    }
+
+    const SUCCESS_COPY =
+      /thank you for apply(ing|ication)|thanks for apply(ing|ication)|thank you for (your )?(application|interest)|application (has been |was )?(successfully )?submitted|successfully (applied|submitted)|we have received your application|application received|application complete|your application was submitted|submitted successfully|thanks for applying|you(r application)? (has been|was) (successfully )?submitted|you('ve| have) successfully submitted|your application has been submitted/i;
+
+    function confirmationChromeText() {
+      const bits = [document.title];
+      const nodes = document.querySelectorAll(
+        "h1, h2, h3, [role='alert'], [role='status'], [data-ui*='success' i], [data-ui*='thank' i], [data-ui*='complete' i], [class*='success' i], [class*='thank' i], [class*='submitted' i]",
+      );
+      let n = 0;
+      for (const el of nodes) {
+        if (!(el instanceof HTMLElement)) continue;
+        const t = (el.innerText || "").trim();
+        if (!t || t.length > 400) continue;
+        bits.push(t);
+        if (++n >= 24) break;
+      }
+      return bits.join("\n");
     }
 
     function looksSuccessful() {
       const href = location.href.toLowerCase();
+      const host = location.hostname.toLowerCase();
       // Greenhouse / Workday / common ATS confirmation URLs
       if (
         /\/confirmation\b|mode=submit_apply|application[_-]?submitted|thank[_-]?you|\/applicationcomplete|\/appsuccess|submitted=true|\/apply\/?.*(confirm|success|thank)|submittedapplication|applicationreceived/i.test(
@@ -851,6 +871,9 @@
       ) {
         return true;
       }
+      // Short confirmation chrome first (avoids missing banners below a long JD)
+      if (SUCCESS_COPY.test(confirmationChromeText())) return true;
+
       const text = pageText();
       // Workday confirmation automation ids
       if (
@@ -859,6 +882,17 @@
         )
       ) {
         return true;
+      }
+      // Workable thank-you often keeps the full JD in the DOM — success copy can sit past 4k
+      if (host.includes("workable.com")) {
+        if (
+          document.querySelector(
+            "[data-ui='application-complete'], [data-ui='thank-you'], [data-ui='application-submitted'], [class*='ApplicationSubmitted'], [class*='application-submitted']",
+          )
+        ) {
+          return true;
+        }
+        if (SUCCESS_COPY.test(pageText(24000))) return true;
       }
       // Paylocity often shows a green check + short success copy
       if (
@@ -872,9 +906,7 @@
           return true;
         }
       }
-      return /thank you for apply(ing|ication)|thanks for apply(ing|ication)|thank you for (your )?(application|interest)|application (has been |was )?(successfully )?submitted|successfully (applied|submitted)|we have received your application|application received|application complete|your application was submitted|submitted successfully|thanks for applying|you(r application)? (has been|was) (successfully )?submitted|you('ve| have) successfully submitted/i.test(
-        text,
-      );
+      return SUCCESS_COPY.test(text);
     }
 
     function looksFailed() {
@@ -917,9 +949,17 @@
       if (!t || t.length > 80) return false;
       if (/^(submit application|send application|submit my application)$/i.test(t)) return true;
       if (/submit(\s+my)?\s+application/i.test(t)) return true;
-      // Workday final CTA
+      // Workday / Workable final CTAs
       if (/^(submit|submit your application)$/i.test(t)) return true;
       if (/^submit$/i.test(t)) return true;
+      // Workable sometimes uses "Send application" variants already covered;
+      // also "Apply" on the last step of a short form (host-gated).
+      if (
+        location.hostname.toLowerCase().includes("workable.com") &&
+        /^(apply|submit application|send application)$/i.test(t)
+      ) {
+        return true;
+      }
       return false;
     }
 
@@ -937,12 +977,12 @@
       try {
         if (!chrome?.runtime?.id) return false;
         let parsed = currentParsed();
-        // Workday thank-you pages sometimes drop the requisition from the URL —
+        // Workday / Workable thank-you pages sometimes drop ids or titles —
         // fall back to the locked listing captured on the first job page.
-        if ((!parsed?.jobKey || (typeof isWeakRole === "function" && isWeakRole(parsed.role))) &&
+        if ((!parsed?.jobKey || (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source))) &&
             typeof readJobCtx === "function") {
           const latest = readJobCtx("applytrack:job:latest");
-          if (latest?.jobKey && !isWeakRole(latest.role)) {
+          if (latest?.jobKey && !isWeakRole(latest.role, latest.source)) {
             parsed = {
               ...parsed,
               ...latest,
@@ -955,8 +995,9 @@
           }
         }
         if (!parsed?.jobKey) return false;
-        if (typeof isWeakRole === "function" && isWeakRole(parsed.role)) return false;
-        if (alreadyLogged(parsed.jobKey)) return false;
+        if (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source)) return false;
+        // Already handled this session — treat as done (don't retry forever)
+        if (alreadyLogged(parsed.jobKey)) return true;
 
         const look = await chrome.runtime.sendMessage({
           type: "LOOKUP",
@@ -964,7 +1005,7 @@
         });
         if (look?.ok && look.found && !look.stale) {
           markLogged(parsed.jobKey);
-          return false;
+          return true;
         }
 
         const res = await chrome.runtime.sendMessage({
@@ -1095,17 +1136,23 @@
       true,
     );
 
-    // Confirmation page (e.g. landed here after Simplify submit)
-    function checkThankYou() {
+    // Confirmation page (e.g. landed here after Simplify submit / Workable thank-you)
+    async function checkThankYou() {
       if (thankYouLogged) return;
       if (typeof isNoisePage === "function" && isNoisePage()) return;
       if (!looksSuccessful()) return;
-      thankYouLogged = true;
-      stopWatch();
-      void saveApplied("thank-you");
+      // Only latch after a successful save (or already tracked). SPA thank-you
+      // can appear before jobKey/lock is ready — retry on the next interval.
+      const ok = await saveApplied("thank-you");
+      if (ok) {
+        thankYouLogged = true;
+        stopWatch();
+      }
     }
 
-    checkThankYou();
-    setInterval(checkThankYou, 2000);
+    void checkThankYou();
+    setInterval(() => {
+      void checkThankYou();
+    }, 2000);
   }
 })();

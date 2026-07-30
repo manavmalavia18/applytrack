@@ -37,6 +37,36 @@ const ApplyTrackATS = {
     },
   },
 
+  ashby: {
+    /**
+     * Ashby headers/titles often append the company:
+     * "Software Engineer, AI Research & Prototyping @ Sage Care Inc"
+     */
+    scrubRole(t) {
+      let s = (t || "").trim().replace(/\s+/g, " ");
+      // "Role @ Company"
+      s = s.replace(/\s+@\s+.+$/i, "").trim();
+      // "Role at Company Inc/LLC/…" (avoid bare "at Scale"-style titles)
+      s = s
+        .replace(
+          /\s+at\s+.+?\s+(Inc\.?|LLC|L\.?L\.?C\.?|Ltd\.?|Corp\.?|Corporation|Company|Group|Co\.?)\.?$/i,
+          "",
+        )
+        .trim();
+      // Trailing " – Company Inc" / " | Company LLC"
+      s = s
+        .replace(
+          /\s*[-–—|]\s*[A-Z][\w.&'’\-]*(?:\s+[\w.&'’\-]+){0,6}\s+(Inc\.?|LLC|L\.?L\.?C\.?|Ltd\.?|Corp\.?|Corporation|Company|Group|Co\.?)\.?$/i,
+          "",
+        )
+        .trim();
+      return s;
+    },
+    isWeakCompany(t) {
+      return /^ashby$/i.test(t);
+    },
+  },
+
   oracle: {
     scrubRole(t) {
       return (t || "")

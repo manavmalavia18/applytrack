@@ -872,13 +872,23 @@ function parseWorkday() {
 }
 
 function parseAshby() {
-  const role = textOf(document.querySelector("h1")) || document.title.split("|")[0].trim() || "";
+  let role =
+    textOf(document.querySelector("h1")) || document.title.split("|")[0].trim() || "";
   const parts = location.pathname.split("/").filter(Boolean);
   const org = (parts[0] || "").toLowerCase();
   const jobId = parts.find((p, i) => i > 0 && /^[0-9a-f-]{8,}$/i.test(p)) || parts[1] || "";
   let company = org.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const atMatch = document.title.match(/@\s*(.+?)(?:\s*[|\-]|$)/);
+  // Prefer "@ Company" from the page title, then from an h1 that still has it glued on
+  const atMatch =
+    document.title.match(/@\s*(.+?)(?:\s*[|\-]|$)/) || role.match(/\s+@\s*(.+)$/);
   if (atMatch) company = atMatch[1].trim();
+  // Strip "@ Company" / "at Company Inc" — ApplyTrackATS.ashby.scrubRole
+  role = typeof scrubRole === "function" ? scrubRole(role, "ashby") || role : role;
+  // Trailing duplicate of the company name (no @/at separator)
+  if (company && role) {
+    const esc = company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    role = role.replace(new RegExp(`\\s*[\\-–—|]?\\s*${esc}\\s*$`, "i"), "").trim() || role;
+  }
   return {
     company,
     role,
