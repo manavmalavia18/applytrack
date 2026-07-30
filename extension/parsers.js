@@ -441,15 +441,17 @@ function parseIcims() {
       .find((s) => s && !bad.test(s) && s.length > 5 && !(typeof isWeakRole === "function" && isWeakRole(s))),
   );
 
-  // Prefer readable company from hostname: careers-peraton.icims.com → Peraton
+  // Hostname tenant → company: apply2-republicfinance.icims.com → Republic Finance
+  // (strip apply / apply2 / careers / jobs prefixes — not part of the brand)
   const host = location.hostname.replace(/^www\./, "");
   let company = host
     .replace(/\.icims\.com$/i, "")
-    .replace(/^(corporatejobs-|jobs-|careers-|apply-)/i, "")
+    .replace(/^(corporatejobs|jobs|careers|apply)\d*-/i, "")
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
   if (/^Alaskaair$/i.test(company)) company = "Alaska Airlines";
+  if (/^Republicfinance$/i.test(company.replace(/\s/g, ""))) company = "Republic Finance";
   if (/publicis\s*groupe/i.test(company) || /^publicisgroupe$/i.test(company.replace(/\s/g, ""))) {
     company = "Publicis Groupe";
   }
@@ -1275,6 +1277,8 @@ function isWeakRole(role) {
 function isWeakCompany(company) {
   const t = (company || "").trim();
   if (!t || t.length < 2) return true;
+  // iCIMS portal chrome left in the name: "Apply2 Republicfinance"
+  if (/^apply\d*\b/i.test(t)) return true;
   return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career)\b/i.test(
     t,
   );
@@ -1381,9 +1385,12 @@ function mergeRememberedJob(parsed, source) {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
       role: preferPrevRole ? prev.role : parsed.role,
-      company: keepLock || isWeakCompany(parsed.company)
-        ? prev.company || parsed.company
-        : parsed.company,
+      company:
+        keepLock && !isWeakCompany(prev.company)
+          ? prev.company
+          : isWeakCompany(parsed.company)
+            ? prev.company || parsed.company
+            : parsed.company,
       // Keep the original listing URL from first capture
       url: prev.url || parsed.url,
       source: parsed.source || prev.source || source,
