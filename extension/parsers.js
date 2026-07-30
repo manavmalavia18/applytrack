@@ -377,41 +377,59 @@ function parseAshby() {
 }
 
 function parseIcims() {
+  // Listing + wizard share /jobs/{id}/… — keep id across /candidate, /login, etc.
+  // https://careers-peraton.icims.com/jobs/169251/.net--angular-software-developer/candidate
   const path = location.pathname;
-  const idMatch = path.match(/\/jobs\/(\d+)/);
-  const jobId = idMatch?.[1] || "";
+  const jobId = path.match(/\/jobs\/(\d+)/)?.[1] || "";
 
-  // /jobs/168579/software-engineer-3%2c-platform/job → Software Engineer 3, Platform
-  const slugMatch = path.match(/\/jobs\/\d+\/([^/]+)/);
+  // Wizard / chrome path segments — never treat as the job title slug
+  const wizardSeg =
+    /^(job|jobs|candidate|login|apply|form|intro|resume|profile|questions?|eeo|assessment|confirmation|thank-?you|connect|account)$/i;
+
+  // Prefer the readable slug after /jobs/{id}/ (skip wizard steps like /candidate)
+  const afterId = (path.match(/\/jobs\/\d+\/(.+)/i)?.[1] || "").replace(/\/+$/, "");
+  const slugSeg =
+    afterId
+      .split("/")
+      .map((s) => {
+        try {
+          return decodeURIComponent(s);
+        } catch {
+          return s;
+        }
+      })
+      .find((s) => s && !wizardSeg.test(s) && !/^\d+$/.test(s)) || "";
+
   let fromSlug = "";
-  if (slugMatch?.[1]) {
-    try {
-      fromSlug = decodeURIComponent(slugMatch[1]);
-    } catch {
-      fromSlug = slugMatch[1];
-    }
-    fromSlug = fromSlug
+  if (slugSeg) {
+    // iCIMS encodes "/" as "--" → .net--angular-… → .NET/ Angular …
+    fromSlug = slugSeg
+      .replace(/--+/g, "/")
       .replace(/[-_]+/g, " ")
+      .replace(/\s*\/\s*/g, "/ ")
       .replace(/\s+/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase())
+      .replace(/\.Net\b/gi, ".NET")
       .replace(/\bJob\b/gi, "")
       .trim();
   }
 
   const bad =
-    /^(talent acquisition|candidate|profile|unknown|careers?|jobs?|login|home|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|submit|application|preferences|demographics|voluntary|self identify|thank you)\b/i;
+    /^(talent acquisition|candidate(\s+profile)?|profile|unknown|careers?|jobs?|login|home|enter your (information|info)|create (a |your )?login|connect your account|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|submit|application|preferences|demographics|voluntary|self identify|thank you)\b/i;
 
   function pick(...cands) {
     for (const raw of cands) {
       const t = (raw || "").trim().replace(/\s+/g, " ");
       if (!t || t.length < 5 || bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
       // Prefer titles that look like roles, not form section headers
-      if (/^(enter|please|complete|fill|provide)\b/i.test(t)) continue;
+      if (/^(enter|please|complete|fill|provide|create|connect)\b/i.test(t)) continue;
       return t;
     }
     return "";
   }
 
+  // Slug first — DOM on wizard steps is "Candidate profile" / "Enter your information"
   const role = pick(
     fromSlug,
     textOf(document.querySelector(".iCIMS_Header, .iCIMS_JobHeader, [class*='JobTitle']")),
@@ -420,10 +438,10 @@ function parseIcims() {
       .split("|")[0]
       .split("-")
       .map((s) => s.trim())
-      .find((s) => s && !bad.test(s) && s.length > 5),
+      .find((s) => s && !bad.test(s) && s.length > 5 && !(typeof isWeakRole === "function" && isWeakRole(s))),
   );
 
-  // Prefer readable company from hostname: careers-publicisgroupe.icims.com
+  // Prefer readable company from hostname: careers-peraton.icims.com → Peraton
   const host = location.hostname.replace(/^www\./, "");
   let company = host
     .replace(/\.icims\.com$/i, "")
@@ -436,9 +454,11 @@ function parseIcims() {
     company = "Publicis Groupe";
   }
 
+  const safeSlug = fromSlug && !(typeof isWeakRole === "function" && isWeakRole(fromSlug)) ? fromSlug : "";
+
   return {
     company: company || "iCIMS",
-    role: role || fromSlug || "Unknown role",
+    role: role || safeSlug || "Unknown role",
     url: location.href.split("?")[0],
     jobKey: jobId ? `icims:${jobId}` : null,
     source: "icims",
@@ -1246,7 +1266,8 @@ function isWeakRole(role) {
   ) {
     return true;
   }
-  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate|profile|follow your application|careers?|jobs?|career center)\b/i.test(
+  // iCIMS / generic apply-wizard step headings
+  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center)\b/i.test(
     t,
   );
 }
@@ -1294,6 +1315,7 @@ function writeJobCtx(parsed) {
  */
 function rememberJob(parsed) {
   if (!parsed?.source || !parsed.jobKey) return;
+  // Never lock wizard chrome ("Candidate profile", "Enter your information", …)
   if (isWeakRole(parsed.role)) return;
   try {
     const existing =
@@ -1304,6 +1326,15 @@ function rememberJob(parsed) {
       existing?.locked &&
       existing.jobKey === parsed.jobKey &&
       !isWeakRole(existing.role)
+    ) {
+      return;
+    }
+    // Same jobKey already has a stronger real title — don't downgrade
+    if (
+      existing?.jobKey === parsed.jobKey &&
+      !isWeakRole(existing.role) &&
+      existing.role &&
+      existing.role !== parsed.role
     ) {
       return;
     }
@@ -1339,21 +1370,20 @@ function mergeRememberedJob(parsed, source) {
       prev.company &&
       prev.role.replace(/\s+/g, "").toLowerCase() === prev.company.replace(/\s+/g, "").toLowerCase();
     const keepLock = useLocked && !lockedIsCompany;
+    // Wizard steps parse form headings — always prefer a good prior title for this jobKey
+    const preferPrevRole =
+      keepLock ||
+      (Boolean(prev.role) &&
+        !isWeakRole(prev.role) &&
+        !lockedIsCompany &&
+        (isWeakRole(parsed.role) || !parsed.role));
     return {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
-      role: keepLock
-        ? prev.role
-        : isWeakRole(parsed.role)
-          ? prev.role && !isWeakRole(prev.role) && !lockedIsCompany
-            ? prev.role
-            : parsed.role
-          : parsed.role,
-      company: keepLock
+      role: preferPrevRole ? prev.role : parsed.role,
+      company: keepLock || isWeakCompany(parsed.company)
         ? prev.company || parsed.company
-        : isWeakCompany(parsed.company)
-          ? prev.company || parsed.company
-          : parsed.company,
+        : parsed.company,
       // Keep the original listing URL from first capture
       url: prev.url || parsed.url,
       source: parsed.source || prev.source || source,
