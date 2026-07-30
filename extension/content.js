@@ -442,7 +442,7 @@
       } else {
         html += `<button class="act primary" id="mark">Mark Applied</button>
           <button class="act ghost" id="save">Save for later</button>
-          <p class="hint">Auto-captured from the listing when possible — edit above anytime, then Mark Applied.</p>`;
+          <p class="hint">Captured details stay locked through Apply/Submit. Edit above only if capture missed.</p>`;
       }
       if (error && error !== "not_configured" && error !== "reload_required") {
         html += `<p class="hint err">${escapeHtml(error)}</p>`;

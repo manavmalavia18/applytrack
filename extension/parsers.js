@@ -1360,113 +1360,142 @@ function readJobCtx(key) {
 }
 
 function writeJobCtx(parsed) {
+  const src = parsed.source;
   const payload = {
-    company: parsed.company,
-    role: parsed.role,
+    company: scrubCompany(parsed.company, src) || parsed.company,
+    role: scrubRole(parsed.role, src) || parsed.role,
     jobKey: parsed.jobKey,
     url: parsed.url,
-    source: parsed.source,
+    source: src,
     locked: true,
     at: Date.now(),
   };
   const json = JSON.stringify(payload);
   sessionStorage.setItem(`applytrack:job:${parsed.jobKey}`, json);
   sessionStorage.setItem("applytrack:job:latest", json);
-  if (parsed.source) sessionStorage.setItem(`applytrack:ctx:${parsed.source}`, json);
+  if (src) sessionStorage.setItem(`applytrack:ctx:${src}`, json);
+}
+
+/** True once we have a real role + company for this posting — never mutate after. */
+function isSolidLock(prev, source) {
+  if (!prev?.locked || !prev.jobKey) return false;
+  const src = source || prev.source;
+  if (!prev.role || isWeakRole(prev.role, src)) return false;
+  if (!prev.company || isWeakCompany(prev.company, src)) return false;
+  // Role that is just the company name is not solid
+  if (
+    prev.role.replace(/\s+/g, "").toLowerCase() ===
+    prev.company.replace(/\s+/g, "").toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function readBestJobCtx(parsed, source) {
+  const src = source || parsed?.source;
+  let prev = parsed?.jobKey ? readJobCtx(`applytrack:job:${parsed.jobKey}`) : null;
+  if (!prev && src) prev = readJobCtx(`applytrack:ctx:${src}`);
+  // Wizard steps often drop the id — reuse latest only for the same ATS
+  if (!prev) {
+    const latest = readJobCtx("applytrack:job:latest");
+    if (latest && (!src || latest.source === src)) prev = latest;
+  }
+  return prev;
 }
 
 /**
- * Lock company/role from the first good listing page.
- * Later wizard/confirmation pages must NOT overwrite that.
- * Weak/ATS-brand titles never lock and can be upgraded when a real title appears.
+ * Lock company/role/url from the first good capture.
+ * Once solid for a jobKey, later pages must NEVER overwrite (all ATS).
+ * Weak titles never lock; they can still upgrade an incomplete lock.
  */
-function rememberJob(parsed) {
+function rememberJob(parsed, opts = {}) {
   if (!parsed?.source || !parsed.jobKey) return;
   const src = parsed.source;
-  // Never lock wizard chrome ("Candidate profile", "Enter your information", …)
-  if (isWeakRole(parsed.role, src)) return;
+  const force = Boolean(opts.force); // manual edits
+  if (!force && isWeakRole(parsed.role, src)) return;
+
   try {
-    const existing =
-      readJobCtx(`applytrack:job:${parsed.jobKey}`) ||
-      readJobCtx(`applytrack:ctx:${src}`);
-    // Already locked with a real title for this posting — keep it
-    if (
-      existing?.locked &&
-      existing.jobKey === parsed.jobKey &&
-      !isWeakRole(existing.role, src)
-    ) {
+    const existing = readJobCtx(`applytrack:job:${parsed.jobKey}`);
+    // Solid lock for this posting — frozen until tab session ends
+    if (!force && existing && existing.jobKey === parsed.jobKey && isSolidLock(existing, src)) {
       return;
     }
-    // Same jobKey already has a stronger real title — don't downgrade
-    if (
-      existing?.jobKey === parsed.jobKey &&
-      !isWeakRole(existing.role, src) &&
-      existing.role &&
-      existing.role !== parsed.role
-    ) {
-      return;
-    }
-    writeJobCtx(parsed);
+
+    // Build next payload: never downgrade a good field already stored
+    const role =
+      !force && existing && !isWeakRole(existing.role, src)
+        ? existing.role
+        : scrubRole(parsed.role, src) || parsed.role;
+    const company =
+      !force && existing && !isWeakCompany(existing.company, src)
+        ? existing.company
+        : scrubCompany(parsed.company, src) || parsed.company || existing?.company;
+    const url = existing?.url || parsed.url;
+
+    if (isWeakRole(role, src)) return;
+
+    writeJobCtx({
+      ...parsed,
+      role,
+      company,
+      url,
+      locked: true,
+    });
   } catch {
     /* ignore */
   }
 }
 
 /**
- * Prefer the locked listing capture over whatever the current page parses.
- * Company/role scrubbing is source-specific (see ats.js) — shared merge stays generic.
+ * Apply the frozen listing capture over whatever the current page parses.
+ * Solid lock ⇒ role, company, url, jobKey stay exactly as recorded until the end.
  */
 function mergeRememberedJob(parsed, source) {
   try {
-    const src = source || parsed?.source;
-    let prev = parsed?.jobKey ? readJobCtx(`applytrack:job:${parsed.jobKey}`) : null;
-    if (!prev && src) prev = readJobCtx(`applytrack:ctx:${src}`);
-    // Confirmation pages sometimes lose the id — use latest only if same source
-    if (!prev) {
-      const latest = readJobCtx("applytrack:job:latest");
-      if (latest && (!src || latest.source === src || !parsed?.jobKey)) prev = latest;
-    }
+    if (!parsed) return parsed;
+    const src = source || parsed.source;
+    const prev = readBestJobCtx(parsed, src);
     if (!prev) return parsed;
 
-    // Different posting — don't mix
-    if (parsed?.jobKey && prev.jobKey && parsed.jobKey !== prev.jobKey) {
+    // Different posting ids — don't mix (page with no id can inherit same-source lock)
+    if (parsed.jobKey && prev.jobKey && parsed.jobKey !== prev.jobKey) {
       return parsed;
     }
 
-    const useLocked = Boolean(prev.locked && !isWeakRole(prev.role, src));
-    // Don't keep a lock where role is just the company name
-    const lockedIsCompany =
-      prev.role &&
-      prev.company &&
-      prev.role.replace(/\s+/g, "").toLowerCase() === prev.company.replace(/\s+/g, "").toLowerCase();
-    const keepLock = useLocked && !lockedIsCompany;
-    // Wizard steps parse form headings — always prefer a good prior title for this jobKey
-    const preferPrevRole =
-      keepLock ||
-      (Boolean(prev.role) &&
-        !isWeakRole(prev.role, src) &&
-        !lockedIsCompany &&
-        (isWeakRole(parsed.role, src) || !parsed.role));
+    // FROZEN: once solid, ignore page parse for identity fields
+    if (isSolidLock(prev, src)) {
+      return {
+        ...parsed,
+        jobKey: prev.jobKey,
+        role: prev.role,
+        company: prev.company,
+        url: prev.url || parsed.url,
+        source: prev.source || parsed.source || src,
+        locked: true,
+      };
+    }
+
+    // Incomplete lock — fill gaps / upgrade weak fields only
+    const prevRoleOk = prev.role && !isWeakRole(prev.role, src);
+    const nextRoleOk = parsed.role && !isWeakRole(parsed.role, src);
+    const role = prevRoleOk
+      ? prev.role
+      : nextRoleOk
+        ? scrubRole(parsed.role, src)
+        : prev.role || parsed.role;
 
     const prevCo = scrubCompany(prev.company, src);
     const nextCo = scrubCompany(parsed.company, src);
-    let company;
-    if (keepLock && !isWeakCompany(prevCo, src)) {
-      // Allow cleaner scrubbed brand to replace a longer locked one
-      if (nextCo && nextCo.length < prevCo.length && prev.company !== prevCo) company = nextCo;
-      else company = prevCo || prev.company;
-    } else if (isWeakCompany(nextCo, src)) {
-      company = prevCo || nextCo || prev.company || parsed.company;
-    } else {
-      company = nextCo || prevCo || parsed.company;
-    }
+    const prevCoOk = prevCo && !isWeakCompany(prevCo, src);
+    const nextCoOk = nextCo && !isWeakCompany(nextCo, src);
+    const company = prevCoOk ? prevCo : nextCoOk ? nextCo : nextCo || prevCo || parsed.company;
 
     return {
       ...parsed,
       jobKey: parsed.jobKey || prev.jobKey,
-      role: preferPrevRole ? scrubRole(prev.role, src) : scrubRole(parsed.role, src) || parsed.role,
+      role,
       company,
-      // Keep the original listing URL from first capture
       url: prev.url || parsed.url,
       source: parsed.source || prev.source || src,
     };
@@ -1480,14 +1509,26 @@ function resolveJobPayload(parsed) {
   if (!parsed) return parsed;
   const normalized = typeof normalizeParsed === "function" ? normalizeParsed(parsed) : parsed;
   const merged = mergeRememberedJob(normalized, normalized.source);
-  const out = typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
-  rememberJob(out);
-  return out;
+  rememberJob(merged);
+  // Re-read after remember so callers always see the frozen solid lock
+  const prev = readBestJobCtx(merged, merged.source);
+  if (prev && isSolidLock(prev, merged.source)) {
+    return {
+      ...merged,
+      jobKey: prev.jobKey,
+      role: prev.role,
+      company: prev.company,
+      url: prev.url || merged.url,
+      source: prev.source || merged.source,
+      locked: true,
+    };
+  }
+  return typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
 }
 
 /**
  * Lock company/role from a manual edit in the side panel.
- * Works even when the ATS parse is weak / missing a jobKey.
+ * Force-overwrites even a solid lock (user intent).
  */
 function lockManualJob(company, role, base) {
   const src = base?.source;
@@ -1507,13 +1548,16 @@ function lockManualJob(company, role, base) {
     url: prev.url || location.href,
     source: prev.source || "manual",
     locked: true,
-    // Only mark as dashboard-style manual when there was no real ATS id
     manual: syntheticKey,
   };
   try {
-    writeJobCtx(next);
+    rememberJob(next, { force: true });
   } catch {
-    /* ignore */
+    try {
+      writeJobCtx(next);
+    } catch {
+      /* ignore */
+    }
   }
   return next;
 }
