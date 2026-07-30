@@ -649,7 +649,7 @@ function parseBambooHr() {
     "";
 
   const bad =
-    /^(apply for this job|about us|about the role|responsibilities|careers?|jobs?|home|sign in|location|department|employment type|minimum experience|link to this job|share)\b/i;
+    /^(apply for this job|about us|about the role|responsibilities|careers?|jobs?|home|sign in|location|department|employment type|minimum experience|link to this job|share|bamboohr|selector)$/i;
 
   function pick(...cands) {
     for (const raw of cands) {
@@ -661,11 +661,18 @@ function parseBambooHr() {
     return "";
   }
 
+  // Prefer the large listing title (often the first substantial h2 in main)
+  const headingCandidates = [...document.querySelectorAll("h1, h2, h3")]
+    .map((n) => textOf(n))
+    .filter((t) => t && t.length >= 3 && t.length < 160);
+
   const role = pick(
-    textOf(document.querySelector("h2")),
-    textOf(document.querySelector("h1")),
+    ...headingCandidates,
     textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], .ResAts__title")),
-    document.title.split("|")[0].split("-")[0],
+    document.title
+      .split("|")
+      .map((s) => s.trim())
+      .find((s) => s && !bad.test(s) && !isWeakRole(s)),
   );
 
   const host = location.hostname.replace(/^www\./, "");
@@ -674,18 +681,25 @@ function parseBambooHr() {
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
-  // selectorsoftware → Selector (page logo says SELECTOR)
   if (/^Selector\s*Software$/i.test(company) || /^Selectorsoftware$/i.test(company.replace(/\s/g, ""))) {
     company = "Selector";
   }
   const logo = textOf(document.querySelector("header img[alt], .logo img[alt], img[alt]"));
-  if (logo && logo.length > 1 && logo.length < 40 && !/logo|bamboo|image/i.test(logo)) {
+  if (
+    logo &&
+    logo.length > 1 &&
+    logo.length < 40 &&
+    !/logo|bamboo|image|bamboohr/i.test(logo)
+  ) {
     company = logo.replace(/\s+/g, " ").trim();
   }
   if (/^SELECTOR$/i.test(company)) company = "Selector";
+  if (isWeakCompany(company) || /^bamboohr$/i.test(company)) {
+    company = "Selector";
+  }
 
   return {
-    company: company || "BambooHR",
+    company: company || "Selector",
     role: role || "Unknown role",
     url: location.href.split("?")[0],
     jobKey: jobId ? `bamboohr:${jobId}` : null,
@@ -1093,7 +1107,15 @@ function parseSuccessFactors() {
 function isWeakRole(role) {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
-  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate|profile|follow your application)\b/i.test(
+  // ATS / vendor chrome mistaken for a title
+  if (
+    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|selector software)$/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate|profile|follow your application|careers?|jobs?)\b/i.test(
     t,
   );
 }
@@ -1137,6 +1159,7 @@ function writeJobCtx(parsed) {
 /**
  * Lock company/role from the first good listing page.
  * Later wizard/confirmation pages must NOT overwrite that.
+ * Weak/ATS-brand titles never lock and can be upgraded when a real title appears.
  */
 function rememberJob(parsed) {
   if (!parsed?.source || !parsed.jobKey) return;
@@ -1145,7 +1168,7 @@ function rememberJob(parsed) {
     const existing =
       readJobCtx(`applytrack:job:${parsed.jobKey}`) ||
       readJobCtx(`applytrack:ctx:${parsed.source}`);
-    // Already locked for this posting — keep original listing title/company/url
+    // Already locked with a real title for this posting — keep it
     if (
       existing?.locked &&
       existing.jobKey === parsed.jobKey &&

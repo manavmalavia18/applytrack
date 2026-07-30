@@ -597,12 +597,16 @@
       parsed?.source === "phenom" ||
       parsed?.source === "workday" ||
       parsed?.source === "salesforce" ||
+      parsed?.source === "bamboohr" ||
+      parsed?.source === "workable" ||
       location.hostname.includes("successfactors") ||
       location.hostname.includes("paylocity") ||
       location.hostname.includes("ultipro") ||
       location.hostname.includes("phenom") ||
       location.hostname.includes("workday") ||
-      location.hostname.includes("salesforce-sites")
+      location.hostname.includes("salesforce-sites") ||
+      location.hostname.includes("bamboohr") ||
+      location.hostname.includes("workable")
     ) {
       setTimeout(() => {
         if (!dead) {
