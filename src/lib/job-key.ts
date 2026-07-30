@@ -151,6 +151,11 @@ export function normalizeJobUrl(raw: string): string {
       const client = jobsIdx >= 2 ? parts[jobsIdx - 2] : "";
       if (id) return `dayforce:${(client || "job").toLowerCase()}:${id}`;
     }
+    if (host.includes("paycomonline.net")) {
+      const portal = url.pathname.match(/\/portal\/([A-Fa-f0-9]+)/)?.[1];
+      const id = url.pathname.match(/\/jobs\/(\d+)/)?.[1];
+      if (id) return portal ? `paycom:${portal}:${id}` : `paycom:${id}`;
+    }
     url.searchParams.sort();
     return `${host}${url.pathname}${url.search}`.toLowerCase();
   } catch {
@@ -226,6 +231,7 @@ export function detectSource(raw: string): string {
     if (host.includes("oraclecloud.com")) return "oracle";
     if (host.includes("taleo.net")) return "taleo";
     if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) return "dayforce";
+    if (host.includes("paycomonline.net")) return "paycom";
     return host.split(".")[0] || "web";
   } catch {
     return "manual";

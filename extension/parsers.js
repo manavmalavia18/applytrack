@@ -54,6 +54,7 @@ function isNoisePage() {
     host.includes("taleo.net") ||
     host.includes("dayforcehcm.com") ||
     host.includes("dayforce.com") ||
+    host.includes("paycomonline.net") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -99,6 +100,10 @@ function isSupportedJobPage() {
   }
   // Dayforce HCM job boards + apply wizard
   if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) {
+    return true;
+  }
+  // Paycom ATS portals
+  if (host.includes("paycomonline.net") && /\/ats\/|\/portal\/|\/jobs\//i.test(location.href)) {
     return true;
   }
   // JazzHR
@@ -188,9 +193,91 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline/i.test(
     location.href,
   );
+}
+
+function parsePaycom() {
+  // https://www.paycomonline.net/v4/ats/web.php/portal/{PORTAL}/jobs/{ID}
+  const path = location.pathname;
+  const portal = path.match(/\/portal\/([A-Fa-f0-9]+)/)?.[1] || "";
+  const jobId = path.match(/\/jobs\/(\d+)/)?.[1] || "";
+
+  const bad =
+    /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search|home|sign in)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 2 || bad.test(t)) continue;
+      if (isWeakRole(t, "paycom")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  const role = pick(
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], .job-title")),
+    textOf(document.querySelector("h2")),
+    document.title.split(/[|–—-]/).map((s) => s.trim())[0],
+  );
+
+  // Location line often sits under the title — not the company
+  let company = "";
+  const locLine = textOf(
+    document.querySelector("[class*='location'], [class*='Location'], .fa-map-marker, [class*='map']"),
+  );
+  // Prefer explicit employer mentions in the body / header
+  const body = (document.body?.innerText || "").slice(0, 4000);
+  const named =
+    body.match(/\b([A-Z][A-Za-z0-9&.' ]{2,40})\s+is\s+looking\b/i)?.[1] ||
+    body.match(/\bat\s+([A-Z][A-Za-z0-9&.' ]{2,40})\b/)?.[1] ||
+    "";
+  if (named && !/devops|engineer|quality|hillsboro|oregon/i.test(named)) {
+    company = scrubCompany(named, "paycom");
+  }
+
+  // "Fortior Solutions Corporate - Hillsboro, OR 97124"
+  if (!company || isWeakCompany(company, "paycom")) {
+    const corporate = body.match(
+      /([A-Z][A-Za-z0-9&.' ]+?)\s+Corporate\s*[-–—]\s*[A-Za-z .]+,\s*[A-Z]{2}/,
+    )?.[1];
+    if (corporate) company = scrubCompany(corporate, "paycom");
+  }
+
+  if ((!company || isWeakCompany(company, "paycom")) && locLine) {
+    // Only use loc line if it starts with a company-shaped prefix before Corporate/city
+    const fromLoc = scrubCompany(locLine, "paycom");
+    if (fromLoc && !/^\d|,\s*[A-Z]{2}\b/.test(fromLoc) && fromLoc.length > 2) {
+      company = fromLoc;
+    }
+  }
+
+  if (!company || isWeakCompany(company, "paycom")) {
+    const logo = textOf(document.querySelector("header img[alt], .logo img[alt], img[alt]"));
+    if (logo && logo.length < 60 && !/logo|paycom|image/i.test(logo)) {
+      company = scrubCompany(logo, "paycom");
+    }
+  }
+
+  company = scrubCompany(company, "paycom") || company;
+
+  const jobKey = jobId
+    ? portal
+      ? `paycom:${portal}:${jobId}`
+      : `paycom:${jobId}`
+    : null;
+
+  return {
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: location.href.split("#")[0],
+    jobKey,
+    reqId: jobId || "",
+    source: "paycom",
+  };
 }
 
 function parseDayforce() {
@@ -1977,6 +2064,8 @@ function parseJobPage() {
     parsed = parseTaleo();
   } else if (host.includes("dayforcehcm.com") || host.includes("dayforce.com")) {
     parsed = parseDayforce();
+  } else if (host.includes("paycomonline.net") && /\/ats\/|\/portal\/|\/jobs\//i.test(location.href)) {
+    parsed = parsePaycom();
   } else {
     parsed = {
       company: "",

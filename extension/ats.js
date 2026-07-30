@@ -132,6 +132,26 @@ const ApplyTrackATS = {
     },
   },
 
+  paycom: {
+    scrubCompany(t) {
+      return (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        // "Fortior Solutions Corporate - Hillsboro, OR 97124"
+        .replace(/\s+corporate\s*[-–—].*$/i, "")
+        .replace(/\s*[-–—]\s*[A-Za-z .]+,\s*[A-Z]{2}(?:\s+\d{5})?.*$/i, "")
+        .trim();
+    },
+    isWeakRole(t) {
+      return /^(overview|description|apply|position type|essential duties|job summary|paycom|full time|part time|search jobs)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^paycom$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 
