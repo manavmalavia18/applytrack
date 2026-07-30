@@ -754,6 +754,7 @@
       parsed?.source === "bamboohr" ||
       parsed?.source === "workable" ||
       parsed?.source === "adp" ||
+      parsed?.source === "oracle" ||
       location.hostname.includes("greenhouse") ||
       location.hostname.includes("taleo") ||
       location.hostname.includes("dayforce") ||
@@ -768,7 +769,8 @@
       location.hostname.includes("salesforce-sites") ||
       location.hostname.includes("bamboohr") ||
       location.hostname.includes("workable") ||
-      location.hostname.includes("adp.com")
+      location.hostname.includes("adp.com") ||
+      location.hostname.includes("oraclecloud.com")
     ) {
       setTimeout(() => {
         if (!dead) {

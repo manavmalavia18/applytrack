@@ -2111,30 +2111,63 @@ function parseOracleCloud() {
   const scrub = (t) => scrubRole(t, "oracle");
   const scrubCo = (t) => scrubCompany(t, "oracle");
 
-  function looksLikeRole(t) {
+  function sameLabel(a, b) {
+    return (
+      Boolean(a) &&
+      Boolean(b) &&
+      a.replace(/\s+/g, "").toLowerCase() === b.replace(/\s+/g, "").toLowerCase()
+    );
+  }
+
+  /** Brand / legal entity — never use as Role (e.g. "The Kroger Co.") */
+  function looksLikeCompanyName(t) {
+    const s = (t || "").trim();
+    if (!s) return false;
+    if (
+      /^(the\s+)?[\w.&'’\-]+(?:\s+[\w.&'’\-]+){0,5}\s+(co\.?|inc\.?|llc|ltd\.?|corp\.?|corporation|company|group)\.?$/i.test(
+        s,
+      )
+    ) {
+      return true;
+    }
+    if (
+      /\b(inc\.?|llc|ltd\.?|corp\.?|corporation|co\.)\s*$/i.test(s) &&
+      !/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(
+        s,
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function looksLikeRole(t, rejectCompany = "") {
     const s = scrub(t);
     if (!s || s.length < 8 || badShell.test(s)) return false;
     if (isWeakRole(s, "oracle")) return false;
+    if (looksLikeCompanyName(s)) return false;
+    if (rejectCompany && sameLabel(s, rejectCompany)) return false;
     return true;
   }
 
   function scoreRole(t) {
     let n = t.length;
-    if (/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant)\b/i.test(t)) {
+    if (/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(t)) {
       n += 80;
     }
-    if (/\b(ii|iii|iv|sr|senior|junior|staff|principal)\b/i.test(t)) n += 20;
-    // Prefer page headings over bloated document.title
+    if (/\b(ii|iii|iv|sr\.?|senior|junior|staff|principal|infrastructure)\b/i.test(t)) n += 20;
+    // Prefer page headings / job titles over bloated document.title or brand lines
     if (/\bcareers?\b/i.test(t) || /\bunited states\b/i.test(t)) n -= 100;
+    if (looksLikeCompanyName(t)) n -= 200;
     return n;
   }
 
-  function pickRole(...cands) {
+  function pickRole(cands, rejectCompany = "") {
     let best = "";
     let bestScore = -1e9;
     for (const raw of cands) {
       const t = scrub(raw);
-      if (!looksLikeRole(t)) continue;
+      if (!looksLikeRole(t, rejectCompany)) continue;
       const sc = scoreRole(t);
       if (sc > bestScore) {
         best = t;
@@ -2148,22 +2181,47 @@ function parseOracleCloud() {
     .map((el) => textOf(el))
     .filter(Boolean);
 
-  const role = pickRole(
+  // document.title: "Senior Infrastructure Engineer | The Kroger Co."
+  // Prefer left of | / emdash; if that is a brand, try other segments
+  const titleParts = (document.title || "")
+    .split(/[|–—]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const ogTitle = document
+    .querySelector('meta[property="og:title"], meta[name="twitter:title"]')
+    ?.getAttribute("content")
+    ?.trim();
+
+  const roleSelectors = [
+    "[class*='jobtitle']",
+    "[class*='job-title']",
+    "[class*='JobTitle']",
+    "[class*='jobTitle']",
+    "[id*='jobTitle']",
+    "[id*='job-title']",
+    "[data-bind*='jobTitle']",
+    "[data-bind*='JobTitle']",
+    "[class*='job-header'] h1",
+    "[class*='JobHeader'] h1",
+    "[class*='job-details'] h1",
+    "[class*='JobDetails'] h1",
+    "[class*='job-details__title']",
+    "[class*='jobDetails'] h1",
+    "main h1",
+    "[role='main'] h1",
+  ];
+
+  const roleFromDom = roleSelectors
+    .map((sel) => textOf(document.querySelector(sel)))
+    .filter(Boolean);
+
+  const roleCandidates = [
     ldTitle,
-    textOf(
-      document.querySelector(
-        "[class*='jobtitle'], [class*='job-title'], [class*='JobTitle'], [class*='jobTitle'], [id*='jobTitle'], [id*='job-title']",
-      ),
-    ),
-    textOf(
-      document.querySelector(
-        "[class*='job-header'] h1, [class*='JobHeader'] h1, [class*='job-details'] h1, [class*='JobDetails'] h1",
-      ),
-    ),
+    ...roleFromDom,
     ...headingTexts,
-    // Only split on | / emdash — never on " - " inside the job name
-    document.title.split(/[|–—]/).map((s) => s.trim())[0],
-  );
+    ...titleParts,
+    ogTitle,
+  ];
 
   function looksLikeCompany(t) {
     const s = scrubCo(t);
@@ -2207,14 +2265,48 @@ function parseOracleCloud() {
     if (looksLikeCompany(brand)) company = scrubCo(brand);
   }
 
-  // Never use fa-*-saasfaprod1 tenant hostname as the company
+  // Brand-looking heading when job title lives elsewhere (CX often puts company in h1 first)
+  if (!company) {
+    for (const h of headingTexts) {
+      if (looksLikeCompanyName(h) && looksLikeCompany(h)) {
+        company = scrubCo(h);
+        break;
+      }
+    }
+  }
+
+  // Title segment that looks like a company (right of "|")
+  if (!company) {
+    for (const part of titleParts) {
+      if (looksLikeCompanyName(part) && looksLikeCompany(part)) {
+        company = scrubCo(part);
+        break;
+      }
+    }
+  }
+
+  // Never use fa-*-saasfaprod1 / oraclecloud tenant hostname as the company
   if (!company) {
     const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ");
     if (/^jpmc$/i.test(sub.trim())) company = "JPMorgan Chase";
-    else if (looksLikeCompany(sub) && !/saasfa|exvu|prod\d/i.test(sub)) {
+    else if (
+      looksLikeCompany(sub) &&
+      !/saasfa|exvu|prod\d|oraclecloud|^fa\b/i.test(sub)
+    ) {
       company = scrubCo(sub.replace(/\b\w/g, (c) => c.toUpperCase()));
     }
   }
+
+  // Prefer real job titles; reject brand/company strings even if they appear first in DOM
+  let role = pickRole(roleCandidates, company);
+  // If role still equals company (no legal suffix), keep searching without that label
+  if ((!role || sameLabel(role, company)) && company) {
+    role = pickRole(
+      roleCandidates.filter((c) => !sameLabel(scrub(c), company)),
+      company,
+    );
+  }
+  if (role && (looksLikeCompanyName(role) || sameLabel(role, company))) role = "";
 
   return {
     company: company || "Unknown",

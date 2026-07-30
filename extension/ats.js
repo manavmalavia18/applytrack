@@ -58,12 +58,30 @@ const ApplyTrackATS = {
         .trim();
     },
     isWeakRole(t) {
-      if (/\bcareers?\s*$/i.test(t)) return true;
+      const s = (t || "").trim();
+      if (!s) return true;
+      if (/\bcareers?\s*$/i.test(s)) return true;
+      // Brand / legal entity mistaken for a title (e.g. "The Kroger Co.")
+      if (
+        /^(the\s+)?[\w.&'’\-]+(?:\s+[\w.&'’\-]+){0,5}\s+(co\.?|inc\.?|llc|ltd\.?|corp\.?|corporation|company|group)\.?$/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      if (
+        /\b(inc\.?|llc|ltd\.?|corp\.?|corporation|co\.)\s*$/i.test(s) &&
+        !/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
       // Company + country mistaken for a title (e.g. "GM Financial United States")
       if (
-        /\b(united states|united kingdom|canada|australia|germany|india)\s*$/i.test(t) &&
+        /\b(united states|united kingdom|canada|australia|germany|india)\s*$/i.test(s) &&
         !/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(
-          t,
+          s,
         )
       ) {
         return true;
@@ -71,8 +89,13 @@ const ApplyTrackATS = {
       return false;
     },
     isWeakCompany(t) {
-      // SaaS tenant host: FA-EXVU-SAASFAPROD1
-      return /^fa[-_]/i.test(t) || /saasfaprod/i.test(t) || /^oracle(\s+career)?$/i.test(t);
+      // Never use SaaS tenant host / Oracle product as company
+      return (
+        /^fa[-_]/i.test(t) ||
+        /saasfaprod/i.test(t) ||
+        /oraclecloud/i.test(t) ||
+        /^oracle(\s+cloud)?(\s+hcm)?(\s+career)?$/i.test(t)
+      );
     },
   },
 
