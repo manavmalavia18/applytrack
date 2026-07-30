@@ -173,11 +173,13 @@
         .co { font-size: 14px; color: #475569; margin: 0 0 12px; }
         .fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
         .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: #475569; }
-        .fields input {
+        .fields input, .fields textarea {
           border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 10px;
-          font-size: 14px; font-weight: 600; color: #14201b; background: #fff;
+          font-size: 13px; font-weight: 600; color: #14201b; background: #fff;
+          font-family: inherit; width: 100%; box-sizing: border-box;
         }
-        .fields input:focus { outline: 2px solid #99f6e4; border-color: #0f766e; }
+        .fields textarea { resize: vertical; min-height: 52px; line-height: 1.35; }
+        .fields input:focus, .fields textarea:focus { outline: 2px solid #99f6e4; border-color: #0f766e; }
         .hint { margin-top: 12px; padding: 12px; border-radius: 10px; background: #ecfeff; color: #155e75; font-size: 12px; line-height: 1.45; }
         .hint.err { background: #fef2f2; color: #991b1b; }
         .actions { display: flex; flex-direction: column; gap: 8px; }
@@ -363,7 +365,7 @@
           canEdit
             ? `<div class="fields">
                 <label>Role
-                  <input id="role" type="text" value="${escapeHtml(weakTitle ? "" : role)}" placeholder="e.g. Software Engineer" autocomplete="off" />
+                  <textarea id="role" rows="2" placeholder="e.g. Software Engineer" autocomplete="off">${escapeHtml(weakTitle ? "" : role)}</textarea>
                 </label>
                 <label>Company
                   <input id="company" type="text" value="${escapeHtml(

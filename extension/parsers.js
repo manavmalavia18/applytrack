@@ -1542,12 +1542,22 @@ function parseOracleCloud() {
       ),
     ),
     ...headingTexts,
+    // Only split title on | / emdash — never on " - " inside the job name
     document.title.split(/[|–—]/).map((s) => s.trim())[0],
-    document.title.split(/\s[-–—]\s/).map((s) => s.trim())[0],
+    document.title.trim(),
   );
 
+  function cleanCompanyName(t) {
+    return (t || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/\s+technology\s*$/i, "")
+      .replace(/\s*,?\s*(united states|united kingdom|usa|uk|canada|australia|india|germany)\s*$/i, "")
+      .trim();
+  }
+
   function looksLikeCompany(t) {
-    const s = (t || "").trim().replace(/\s+/g, " ");
+    const s = cleanCompanyName(t);
     if (!s || s.length < 2 || s.length > 80) return false;
     if (typeof isWeakCompany === "function" && isWeakCompany(s)) return false;
     if (/logo|image|oraclecloud|candidate experience|sign in/i.test(s)) return false;
@@ -1555,26 +1565,27 @@ function parseOracleCloud() {
   }
 
   let company = "";
-  if (looksLikeCompany(ldCompany)) company = ldCompany;
+
+  // Prefer on-page brand ("Why GM Financial Technology?") over CX region labels
+  for (const el of document.querySelectorAll("h1, h2, h3, strong, b, p")) {
+    const t = textOf(el);
+    const m = t.match(/^why\s+(.+?)(?:\s+technology)?\s*\??$/i);
+    if (m && looksLikeCompany(m[1])) {
+      company = cleanCompanyName(m[1]);
+      break;
+    }
+  }
+
+  if (!company && looksLikeCompany(ldCompany)) company = cleanCompanyName(ldCompany);
 
   const og = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
-  if (!company && looksLikeCompany(og)) company = og;
+  if (!company && looksLikeCompany(og)) company = cleanCompanyName(og);
 
   const logoAlt = textOf(
     document.querySelector("header img[alt], [class*='logo'] img[alt], a[class*='logo'] img[alt]"),
   );
-  if (!company && looksLikeCompany(logoAlt) && !/logo|image/i.test(logoAlt)) company = logoAlt;
-
-  // "Why GM Financial Technology?" on CX job pages
-  if (!company) {
-    for (const el of document.querySelectorAll("h1, h2, h3, strong, b, p")) {
-      const t = textOf(el);
-      const m = t.match(/^why\s+(.+?)(?:\s+technology)?\s*\??$/i);
-      if (m && looksLikeCompany(m[1])) {
-        company = m[1].replace(/\s+technology$/i, "").trim();
-        break;
-      }
-    }
+  if (!company && looksLikeCompany(logoAlt) && !/logo|image/i.test(logoAlt)) {
+    company = cleanCompanyName(logoAlt);
   }
 
   // Header brand / org line (not the SaaS tenant host)
@@ -1584,7 +1595,7 @@ function parseOracleCloud() {
         "header a[aria-label], [class*='company-name'], [class*='organization'], [class*='employer']",
       ),
     );
-    if (looksLikeCompany(brand)) company = brand;
+    if (looksLikeCompany(brand)) company = cleanCompanyName(brand);
   }
 
   // Never use fa-*-saasfaprod1 tenant hostname as the company
@@ -1592,7 +1603,7 @@ function parseOracleCloud() {
     const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ");
     if (/^jpmc$/i.test(sub.trim())) company = "JPMorgan Chase";
     else if (looksLikeCompany(sub) && !/saasfa|exvu|prod\d/i.test(sub)) {
-      company = sub.replace(/\b\w/g, (c) => c.toUpperCase());
+      company = cleanCompanyName(sub.replace(/\b\w/g, (c) => c.toUpperCase()));
     }
   }
 
