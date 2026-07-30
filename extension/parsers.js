@@ -1268,6 +1268,15 @@ function isWeakRole(role) {
   ) {
     return true;
   }
+  // Company + country (e.g. "GM Financial United States") — not a job title
+  if (
+    /\b(united states|united kingdom|canada|australia|germany|india)\s*$/i.test(t) &&
+    !/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant|coordinator|officer|programmer)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
   // iCIMS / generic apply-wizard step headings
   return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center)\b/i.test(
     t,
@@ -1279,6 +1288,8 @@ function isWeakCompany(company) {
   if (!t || t.length < 2) return true;
   // iCIMS portal chrome left in the name: "Apply2 Republicfinance"
   if (/^apply\d*\b/i.test(t)) return true;
+  // Oracle SaaS tenant host mistaken for company: FA-EXVU-SAASFAPROD1
+  if (/^fa[-_]/i.test(t) || /saasfaprod/i.test(t) || /^oracle(\s+career)?$/i.test(t)) return true;
   return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career)\b/i.test(
     t,
   );
@@ -1444,40 +1455,153 @@ function parseOracleCloud() {
   const path = location.pathname;
   const jobId = path.match(/\/job\/(\d+)/)?.[1] || path.match(/\/jobs\/(\d+)/)?.[1] || "";
 
-  const bad =
-    /^(apply now|view more jobs|job information|hello|careers?|home|sign in|log in|work summary|my applications|info and alerts|personal info|manav|candidate)\b/i;
-  function pick(...cands) {
-    for (const raw of cands) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
-      if (!t || t.length < 8 || bad.test(t)) continue;
-      // Prefer titles that look like roles (often contain Engineer/Developer/etc. or are long)
-      return t;
+  // JSON-LD JobPosting when Oracle / CX emits it
+  let ldTitle = "";
+  let ldCompany = "";
+  try {
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      let data;
+      try {
+        data = JSON.parse(script.textContent || "null");
+      } catch {
+        continue;
+      }
+      const nodes = [];
+      const walk = (v) => {
+        if (!v) return;
+        if (Array.isArray(v)) {
+          v.forEach(walk);
+          return;
+        }
+        if (typeof v !== "object") return;
+        nodes.push(v);
+        if (v["@graph"]) walk(v["@graph"]);
+      };
+      walk(data);
+      for (const node of nodes) {
+        const type = String(node["@type"] || "");
+        if (!/JobPosting/i.test(type)) continue;
+        if (node.title) ldTitle = String(node.title).trim();
+        const org = node.hiringOrganization;
+        const name = typeof org === "string" ? org : org?.name;
+        if (name) ldCompany = String(name).trim();
+      }
     }
-    return "";
+  } catch {
+    /* ignore */
   }
 
-  const role = pick(
-    textOf(document.querySelector("h1")),
-    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], .job-header h1")),
-    // Job info section sometimes has title nearby
-    textOf(document.querySelector("[class*='job-details'] h1, [class*='JobDetails'] h1")),
-    document.title
-      .split("|")
-      .map((s) => s.trim())
-      .find((s) => s && !bad.test(s) && s.length > 8),
+  const badShell =
+    /^(apply now|view more jobs|job information|job description|hello|careers?|home|sign in|log in|work summary|my applications|info and alerts|personal info|candidate|search jobs|be\s)/i;
+
+  function looksLikeRole(t) {
+    const s = (t || "").trim().replace(/\s+/g, " ");
+    if (!s || s.length < 8 || badShell.test(s)) return false;
+    if (typeof isWeakRole === "function" && isWeakRole(s)) return false;
+    return true;
+  }
+
+  function scoreRole(t) {
+    let n = t.length;
+    if (/\b(engineer|developer|analyst|manager|intern|director|specialist|architect|scientist|designer|lead|associate|consultant)\b/i.test(t)) {
+      n += 80;
+    }
+    if (/\b(ii|iii|iv|sr|senior|junior|staff|principal)\b/i.test(t)) n += 20;
+    return n;
+  }
+
+  function pickRole(...cands) {
+    let best = "";
+    let bestScore = 0;
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!looksLikeRole(t)) continue;
+      const sc = scoreRole(t);
+      if (sc > bestScore) {
+        best = t;
+        bestScore = sc;
+      }
+    }
+    return best;
+  }
+
+  const headingTexts = [...document.querySelectorAll("h1, h2")]
+    .map((el) => textOf(el))
+    .filter(Boolean);
+
+  const role = pickRole(
+    ldTitle,
+    textOf(
+      document.querySelector(
+        "[class*='jobtitle'], [class*='job-title'], [class*='JobTitle'], [class*='jobTitle'], [id*='jobTitle'], [id*='job-title']",
+      ),
+    ),
+    textOf(
+      document.querySelector(
+        "[class*='job-header'] h1, [class*='JobHeader'] h1, [class*='job-details'] h1, [class*='JobDetails'] h1",
+      ),
+    ),
+    ...headingTexts,
+    document.title.split(/[|–—]/).map((s) => s.trim())[0],
+    document.title.split(/\s[-–—]\s/).map((s) => s.trim())[0],
   );
 
-  const sub = location.hostname.split(".")[0] || "";
-  let company = sub.replace(/\.fa$/i, "").toUpperCase();
-  if (company === "JPMC") company = "JPMorgan Chase";
-  const fromLogo = textOf(document.querySelector("header img[alt], [class*='logo'] img[alt]"));
-  if (fromLogo && fromLogo.length < 60 && !/logo|image/i.test(fromLogo)) company = fromLogo;
+  function looksLikeCompany(t) {
+    const s = (t || "").trim().replace(/\s+/g, " ");
+    if (!s || s.length < 2 || s.length > 80) return false;
+    if (typeof isWeakCompany === "function" && isWeakCompany(s)) return false;
+    if (/logo|image|oraclecloud|candidate experience|sign in/i.test(s)) return false;
+    return true;
+  }
 
+  let company = "";
+  if (looksLikeCompany(ldCompany)) company = ldCompany;
+
+  const og = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
+  if (!company && looksLikeCompany(og)) company = og;
+
+  const logoAlt = textOf(
+    document.querySelector("header img[alt], [class*='logo'] img[alt], a[class*='logo'] img[alt]"),
+  );
+  if (!company && looksLikeCompany(logoAlt) && !/logo|image/i.test(logoAlt)) company = logoAlt;
+
+  // "Why GM Financial Technology?" on CX job pages
+  if (!company) {
+    for (const el of document.querySelectorAll("h1, h2, h3, strong, b, p")) {
+      const t = textOf(el);
+      const m = t.match(/^why\s+(.+?)(?:\s+technology)?\s*\??$/i);
+      if (m && looksLikeCompany(m[1])) {
+        company = m[1].replace(/\s+technology$/i, "").trim();
+        break;
+      }
+    }
+  }
+
+  // Header brand / org line (not the SaaS tenant host)
+  if (!company) {
+    const brand = textOf(
+      document.querySelector(
+        "header a[aria-label], [class*='company-name'], [class*='organization'], [class*='employer']",
+      ),
+    );
+    if (looksLikeCompany(brand)) company = brand;
+  }
+
+  // Never use fa-*-saasfaprod1 tenant hostname as the company
+  if (!company) {
+    const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ");
+    if (/^jpmc$/i.test(sub.trim())) company = "JPMorgan Chase";
+    else if (looksLikeCompany(sub) && !/saasfa|exvu|prod\d/i.test(sub)) {
+      company = sub.replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+  }
+
+  // If role still empty but company-shaped string was in title area, leave role unknown
+  // (manual entry / later SPA paint can fill it; do not lock host junk)
   return {
-    company: company || "Oracle Career",
+    company: company || "Unknown",
     role: role || "Unknown role",
     url: location.href.split("?")[0],
-    // Require numeric job id — avoid logging profile pages as applications
     jobKey: jobId ? `oracle:${jobId}` : null,
     source: "oracle",
   };
