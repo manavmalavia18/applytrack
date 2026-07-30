@@ -262,8 +262,18 @@ const ApplyTrackATS = {
       return c;
     },
     isWeakCompany(t) {
-      // Never use Lever CDN host labels as the employer
-      return /^(jobs|lever|www)$/i.test((t || "").trim());
+      const s = (t || "").trim();
+      // Never use Lever host labels as the employer
+      if (/^(jobs|lever|www)$/i.test(s)) return true;
+      // Job titles mistaken for company (old title-parse / bad locks)
+      if (
+        /\b(engineer|developer|scientist|analyst|manager|designer|architect|specialist|director|intern|coordinator|consultant|officer|associate|recruiter)\b/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      return false;
     },
   },
 

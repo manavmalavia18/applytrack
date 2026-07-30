@@ -790,7 +790,7 @@ function parseLever() {
     return (el.getAttribute("alt") || el.alt || "").trim().replace(/\s+/g, " ");
   }
 
-  /** Reject host labels, empty, or anything equal to the job title. */
+  /** Reject host labels, role titles, empty, or anything equal to the job title. */
   function badCompany(c, roleName) {
     const t = (c || "").trim();
     if (!t || isWeakCompany(t, "lever")) return true;
@@ -811,9 +811,14 @@ function parseLever() {
       .slice(-1)[0],
   );
 
-  // Prefer: logo/alt → og:site_name → visible header → title company → path slug
+  // Path slug is ALWAYS a strong floor for jobs.lever.co/{slug}/…
+  // atomcomputing → Atom Computing (via scrubCompany alias / title case)
+  const fromSlug = scrubCompany(titleCaseSlug(companySlug), "lever");
+  let company = fromSlug && !badCompany(fromSlug, role) ? fromSlug : "";
+
+  // Prefer brand signals over the slug floor when available
+  // logo/alt → og:site_name → visible header → title company → keep slug
   // Never hostname "jobs", never company === role.
-  let company = "";
   const logo = imgAlt(
     ".main-header-logo img[alt], header img[alt], .logo img[alt], a[class*='logo'] img[alt]",
   );
@@ -839,13 +844,15 @@ function parseLever() {
   }
 
   if (badCompany(company, role)) {
-    const header = pick(
-      textOf(document.querySelector(".main-header-company")),
-      textOf(document.querySelector(".main-header-content .main-header-company span")),
-      textOf(document.querySelector("[class*='main-header-company']")),
-    );
-    if (header && header.length < 60) {
-      const scrubbed = scrubCompany(header, "lever");
+    // Header brand text only — do not use pick() (it accepts role-shaped strings)
+    const headerRaw = (
+      textOf(document.querySelector(".main-header-company")) ||
+      textOf(document.querySelector(".main-header-content .main-header-company span")) ||
+      textOf(document.querySelector("[class*='main-header-company']")) ||
+      ""
+    ).trim();
+    if (headerRaw && headerRaw.length < 60) {
+      const scrubbed = scrubCompany(headerRaw, "lever");
       if (!badCompany(scrubbed, role)) company = scrubbed;
     }
   }
@@ -862,12 +869,15 @@ function parseLever() {
     }
   }
 
-  if (badCompany(company, role)) {
-    company = scrubCompany(titleCaseSlug(companySlug), "lever");
+  // Restore slug floor if brand signals were weak / role-shaped
+  if (badCompany(company, role) && fromSlug && !badCompany(fromSlug, role)) {
+    company = fromSlug;
   }
 
   company = scrubCompany(company, "lever") || company;
-  if (badCompany(company, role)) company = "";
+  if (badCompany(company, role)) {
+    company = fromSlug && !badCompany(fromSlug, role) ? fromSlug : "";
+  }
 
   const listingUrl = location.href
     .split("?")[0]
@@ -1930,19 +1940,31 @@ function writeJobCtx(parsed) {
   if (src) sessionStorage.setItem(`applytrack:ctx:${src}`, json);
 }
 
+/** True when company/role labels are the same string (ignoring whitespace/case). */
+function labelsMatch(a, b) {
+  const x = (a || "").replace(/\s+/g, "").toLowerCase();
+  const y = (b || "").replace(/\s+/g, "").toLowerCase();
+  return Boolean(x && y && x === y);
+}
+
+/**
+ * Company is usable for locking only when it's a real employer name —
+ * not weak chrome, and never a duplicate of the role title.
+ */
+function isUsableCompany(company, role, source) {
+  const c = (company || "").trim();
+  if (!c || isWeakCompany(c, source)) return false;
+  if (role && labelsMatch(c, role)) return false;
+  return true;
+}
+
 /** True once we have a real role + company for this posting — never mutate after. */
 function isSolidLock(prev, source) {
   if (!prev?.locked || !prev.jobKey) return false;
   const src = source || prev.source;
   if (!prev.role || isWeakRole(prev.role, src)) return false;
-  if (!prev.company || isWeakCompany(prev.company, src)) return false;
-  // Role that is just the company name is not solid
-  if (
-    prev.role.replace(/\s+/g, "").toLowerCase() ===
-    prev.company.replace(/\s+/g, "").toLowerCase()
-  ) {
-    return false;
-  }
+  // company === role is never solid (e.g. Lever locked "Software Engineer" as both)
+  if (!isUsableCompany(prev.company, prev.role, src)) return false;
   return true;
 }
 
@@ -1990,8 +2012,11 @@ function rememberJob(parsed, opts = {}) {
       !force && existing && !isWeakRole(existing.role, src)
         ? existing.role
         : scrubRole(parsed.role, src) || parsed.role;
+    // Weak / role-duplicate company must upgrade from a better parse
+    const existingCoOk =
+      existing && isUsableCompany(existing.company, role, src);
     const company =
-      !force && existing && !isWeakCompany(existing.company, src)
+      !force && existingCoOk
         ? existing.company
         : scrubCompany(parsed.company, src) || parsed.company || existing?.company;
     const url = existing?.url || parsed.url;
@@ -2069,8 +2094,9 @@ function mergeRememberedJob(parsed, source) {
 
     const prevCo = scrubCompany(prev.company, lockSrc);
     const nextCo = scrubCompany(parsed.company, src);
-    const prevCoOk = prevCo && !isWeakCompany(prevCo, lockSrc);
-    const nextCoOk = nextCo && !isWeakCompany(nextCo, src);
+    // company === role (or other weak) must upgrade from a better page parse
+    const prevCoOk = isUsableCompany(prevCo, role, lockSrc);
+    const nextCoOk = isUsableCompany(nextCo, role, src);
     const company = prevCoOk ? prevCo : nextCoOk ? nextCo : nextCo || prevCo || parsed.company;
 
     return {
