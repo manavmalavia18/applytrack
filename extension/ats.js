@@ -12,6 +12,26 @@
  *   isWeakCompany(company)→ extra "don't lock this company" checks
  */
 const ApplyTrackATS = {
+  workday: {
+    /** "Full Stack Software Engineer II R 108283 1" → title only */
+    scrubRole(t) {
+      return (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(
+          /\s*[_\-–—]?\s*((?:JR|R|REQ)[-_\s]?\d{3,}(?:[-_\s]\d+)?)\s*$/i,
+          "",
+        )
+        .replace(/\s+/g, " ")
+        .trim();
+    },
+    isWeakRole(t) {
+      return /^(start your apply|autofil|my applications|job description|workday|next|submit|review)$/i.test(
+        t,
+      );
+    },
+  },
+
   oracle: {
     scrubRole(t) {
       return (t || "")

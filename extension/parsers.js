@@ -454,25 +454,43 @@ function parseLever() {
 }
 
 function parseWorkday() {
-  // https://company.wd5.myworkdayjobs.com/.../job/City/Role-Title_JR12345
-  // Apply steps often change the path — lock on requisition / job id.
+  // https://company.wd5.myworkdayjobs.com/.../job/City/Role-Title_R-108283-1
+  // Keep Req ID (R-108283) separate from the role title.
   const path = location.pathname;
   const href = location.href;
 
-  const reqId =
-    path.match(/_((?:JR|R|REQ)[-_]?\d{3,})\b/i)?.[1] ||
-    href.match(/_((?:JR|R|REQ)[-_]?\d{3,})\b/i)?.[1] ||
-    path.match(/\/job\/[^/]+\/[^/]*?((?:JR|R|REQ)[-_]?\d{3,})/i)?.[1] ||
+  function normalizeWorkdayReq(raw) {
+    if (!raw) return "";
+    let id = String(raw).trim().toUpperCase().replace(/\s+/g, "");
+    // R108283 → R-108283 ; JR12345 stays JR12345-ish
+    id = id.replace(/^(JR|R|REQ)[_-]?(\d{3,})(?:[-_]\d+)?$/i, (_, p, n) => {
+      const prefix = p.toUpperCase();
+      return prefix === "R" || prefix === "REQ" ? `${prefix}-${n}` : `${prefix}${n}`;
+    });
+    // Drop Workday URL revision suffix: R-108283-1 → R-108283
+    id = id.replace(/^((?:JR|R|REQ)-?\d{3,})[-_]\d+$/i, "$1");
+    if (/^R\d{3,}$/i.test(id)) id = `R-${id.slice(1)}`;
+    return id;
+  }
+
+  const reqRaw =
+    path.match(/_((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)\b/i)?.[1] ||
+    href.match(/_((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)\b/i)?.[1] ||
+    path.match(/\/job\/[^/]+\/[^/]*?((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)/i)?.[1] ||
+    (document.body?.innerText || "").match(
+      /\bJob\s*ID\s*[:#]?\s*((?:JR|R|REQ)[-_]?\d{3,})/i,
+    )?.[1] ||
     new URLSearchParams(location.search).get("jobRequisitionId") ||
     new URLSearchParams(location.search).get("requisitionId") ||
     "";
+  const reqId = normalizeWorkdayReq(reqRaw);
 
   // Fallback: stable segment under /job/… (before /apply)
   const jobSeg =
     path.match(/\/job\/(.+?)(?:\/apply|\?|$)/i)?.[1]?.replace(/\/+$/, "") || "";
 
   const jobKey = reqId
-    ? `workday:${reqId.toUpperCase()}`
+    ? `workday:${reqId}`
     : jobSeg
       ? `workday:${location.hostname.replace(/^www\./, "")}/${jobSeg}`
       : null;
@@ -480,22 +498,26 @@ function parseWorkday() {
   const bad =
     /^(apply|start your apply|autofil|sign in|create account|my applications|job description|workday|next|submit|review)\b/i;
 
+  function stripReqFromRole(t) {
+    return scrubRole(t, "workday") || (t || "").trim();
+  }
+
   function pick(...cands) {
     for (const raw of cands) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
+      const t = stripReqFromRole(raw);
       if (!t || t.length < 5 || bad.test(t)) continue;
-      if (typeof isWeakRole === "function" && isWeakRole(t)) continue;
+      if (isWeakRole(t, "workday")) continue;
       return t;
     }
     return "";
   }
 
-  // Title_JR12345 → Title
+  // Title_R-108283-1 → Title (must strip before turning -/_ into spaces)
   let fromPath = "";
   if (jobSeg) {
     const last = jobSeg.split("/").pop() || "";
     fromPath = last
-      .replace(/_((?:JR|R|REQ)[-_]?\d{3,})$/i, "")
+      .replace(/_((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)$/i, "")
       .replace(/[-_]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -507,16 +529,17 @@ function parseWorkday() {
     textOf(document.querySelector("h2")),
     textOf(document.querySelector("h1")),
     fromPath,
-    document.title.split("|")[0].split("–")[0].split("-")[0],
+    document.title.split("|")[0],
   );
 
   const host = location.hostname.replace(/^www\./, "");
   let company = host.split(".")[0] || "Workday";
-  // nvidia.wd5.myworkdayjobs.com → nvidia
+  // expedia.wd108.myworkdayjobs.com → expedia
   if (/\.myworkdayjobs\.com$/i.test(host)) {
     company = host.split(".")[0];
   }
   company = company.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  if (/^Expedia$/i.test(company)) company = "Expedia";
   const logo = textOf(document.querySelector("img[alt], [data-automation-id='logo'] img[alt]"));
   if (logo && logo.length > 2 && logo.length < 60 && !/logo|workday|image/i.test(logo)) {
     company = logo;
@@ -533,6 +556,7 @@ function parseWorkday() {
     role: role || fromPath || "Unknown role",
     url: listingUrl || location.href.split("?")[0],
     jobKey,
+    reqId: reqId || "",
     source: "workday",
   };
 }
@@ -1451,6 +1475,7 @@ function writeJobCtx(parsed) {
     company: scrubCompany(parsed.company, src) || parsed.company,
     role: scrubRole(parsed.role, src) || parsed.role,
     jobKey: parsed.jobKey,
+    reqId: parsed.reqId || "",
     url: parsed.url,
     source: src,
     locked: true,
@@ -1568,6 +1593,7 @@ function mergeRememberedJob(parsed, source) {
         jobKey: prev.jobKey,
         role: prev.role,
         company: prev.company,
+        reqId: prev.reqId || parsed.reqId || "",
         url: prev.url || parsed.url,
         source: prev.source || parsed.source || src,
         locked: true,
@@ -1618,6 +1644,7 @@ function resolveJobPayload(parsed) {
       jobKey: prev.jobKey,
       role: prev.role,
       company: prev.company,
+      reqId: prev.reqId || merged.reqId || "",
       url: prev.url || merged.url,
       source: prev.source || merged.source,
       locked: true,

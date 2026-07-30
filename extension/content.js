@@ -396,6 +396,11 @@
         typeof isWeakRole === "function"
           ? isWeakRole(role, parsed?.source)
           : !role || role === "Job posting";
+      const reqId =
+        parsed?.reqId ||
+        (parsed?.jobKey && String(parsed.jobKey).match(/^(?:workday|taleo|dayforce):(.+)$/i)?.[1]) ||
+        "";
+      const showReqId = Boolean(reqId) || parsed?.source === "workday";
 
       let html = `
         <div class="status ${statusClass}">${escapeHtml(statusText)}</div>
@@ -410,8 +415,17 @@
                     company === "Unknown company" || company === "Unknown" ? "" : company,
                   )}" placeholder="e.g. Acme Inc" autocomplete="off" />
                 </label>
+                ${
+                  showReqId
+                    ? `<label>Job ID
+                        <input id="reqId" type="text" value="${escapeHtml(reqId)}" placeholder="e.g. R-108283" autocomplete="off" />
+                      </label>`
+                    : ""
+                }
               </div>`
-            : `<h1>${escapeHtml(role)}</h1><p class="co">${escapeHtml(company)}</p>`
+            : `<h1>${escapeHtml(role)}</h1><p class="co">${escapeHtml(company)}</p>${
+                reqId ? `<p class="co">Job ID: ${escapeHtml(reqId)}</p>` : ""
+              }`
         }
         ${autoNote ? `<p class="hint">${escapeHtml(autoNote)}</p>` : ""}
         <div class="actions">
@@ -453,16 +467,25 @@
       const syncManual = () => {
         const roleIn = body.querySelector("#role");
         const companyIn = body.querySelector("#company");
-        if (!roleIn && !companyIn) return;
+        const reqIn = body.querySelector("#reqId");
+        if (!roleIn && !companyIn && !reqIn) return;
         if (typeof lockManualJob === "function") {
           parsed = lockManualJob(companyIn?.value, roleIn?.value, parsed || parseJobPage());
         } else if (parsed) {
           if (roleIn?.value.trim()) parsed.role = roleIn.value.trim();
           if (companyIn?.value.trim()) parsed.company = companyIn.value.trim();
         }
+        if (parsed && reqIn) {
+          const id = reqIn.value.trim().toUpperCase();
+          parsed.reqId = id;
+          if (id && parsed.source === "workday") {
+            parsed.jobKey = `workday:${id.replace(/\s+/g, "")}`;
+          }
+        }
       };
       body.querySelector("#role")?.addEventListener("change", syncManual);
       body.querySelector("#company")?.addEventListener("change", syncManual);
+      body.querySelector("#reqId")?.addEventListener("change", syncManual);
       body.querySelector("#draft")?.addEventListener("click", draftAnswers);
       body.querySelector("#mark")?.addEventListener("click", () => save("applied"));
       body.querySelector("#save")?.addEventListener("click", () => save("saved"));
@@ -586,6 +609,7 @@
       // Never let wizard chrome ("Manual Application") force-overwrite a solid lock.
       const roleIn = body.querySelector("#role");
       const companyIn = body.querySelector("#company");
+      const reqIn = body.querySelector("#reqId");
       if (roleIn || companyIn) {
         if (typeof lockManualJob === "function") {
           parsed =
@@ -600,6 +624,11 @@
             parsed.company = typedCo;
           }
         }
+      }
+      if (parsed && reqIn?.value.trim()) {
+        const id = reqIn.value.trim().toUpperCase().replace(/\s+/g, "").replace(/^WORKDAY:/i, "");
+        parsed.reqId = id;
+        if (parsed.source === "workday" && id) parsed.jobKey = `workday:${id}`;
       }
       // Re-assert solid lock after panel merge
       if (typeof resolveJobPayload === "function") {

@@ -43,12 +43,20 @@ export function normalizeJobUrl(raw: string): string {
     }
     if (host.includes("myworkdayjobs.com") || host.includes("workday.com")) {
       const path = url.pathname;
-      const reqId =
-        path.match(/_((?:JR|R|REQ)[-_]?\d{3,})\b/i)?.[1] ||
-        url.href.match(/_((?:JR|R|REQ)[-_]?\d{3,})\b/i)?.[1] ||
+      let reqId =
+        path.match(/_((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)\b/i)?.[1] ||
+        url.href.match(/_((?:JR|R|REQ)[-_]?\d{3,}(?:[-_]\d+)?)\b/i)?.[1] ||
         url.searchParams.get("jobRequisitionId") ||
         url.searchParams.get("requisitionId");
-      if (reqId) return `workday:${reqId.toUpperCase()}`;
+      if (reqId) {
+        reqId = String(reqId)
+          .toUpperCase()
+          .replace(/\s+/g, "")
+          .replace(/^(R)(\d{3,})(?:[-_]\d+)?$/i, "R-$2")
+          .replace(/^((?:JR|R|REQ)-?\d{3,})[-_]\d+$/i, "$1");
+        if (/^R\d{3,}$/.test(reqId)) reqId = `R-${reqId.slice(1)}`;
+        return `workday:${reqId}`;
+      }
       const jobSeg = path.match(/\/job\/(.+?)(?:\/apply|\?|$)/i)?.[1]?.replace(/\/+$/, "");
       if (jobSeg) return `workday:${host}/${jobSeg}`.toLowerCase();
       const trimmed = path.replace(/\/+$/, "").replace(/\/apply$/i, "");
