@@ -1401,6 +1401,38 @@ function resolveJobPayload(parsed) {
   return merged;
 }
 
+/**
+ * Lock company/role from a manual edit in the side panel.
+ * Works even when the ATS parse is weak / missing a jobKey.
+ */
+function lockManualJob(company, role, base) {
+  const c = (company || "").trim();
+  const r = (role || "").trim();
+  if (!r || isWeakRole(r)) return base || null;
+  const prev = base || {};
+  const jobKey =
+    prev.jobKey ||
+    `manual:${(location.href || "").split("#")[0]}`.slice(0, 220);
+  const syntheticKey = !prev.jobKey || String(jobKey).startsWith("manual:");
+  const next = {
+    ...prev,
+    company: c || prev.company || "Unknown",
+    role: r,
+    jobKey,
+    url: prev.url || location.href,
+    source: prev.source || "manual",
+    locked: true,
+    // Only mark as dashboard-style manual when there was no real ATS id
+    manual: syntheticKey,
+  };
+  try {
+    writeJobCtx(next);
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
+
 function parseOracleCloud() {
   const path = location.pathname;
   const jobId = path.match(/\/job\/(\d+)/)?.[1] || path.match(/\/jobs\/(\d+)/)?.[1] || "";

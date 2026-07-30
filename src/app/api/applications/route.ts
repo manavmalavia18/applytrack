@@ -49,7 +49,6 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const url = String(body.url || "").trim();
     const company = String(body.company || "Unknown").trim() || "Unknown";
     const role =
       cleanRoleTitle(String(body.role || "Unknown role").trim()) || "Unknown role";
@@ -57,12 +56,27 @@ export async function POST(req: NextRequest) {
       ? String(body.status)
       : "applied";
     const notes = String(body.notes || "");
+    const forceManual = Boolean(body.manual) || body.source === "manual";
+    let url = String(body.url || "").trim();
+    if (!url) {
+      if (forceManual || (company !== "Unknown" && role !== "Unknown role")) {
+        const slug = (s: string) =>
+          s
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 48) || "entry";
+        url = `https://manual.applytrack.app/${slug(company)}/${slug(role)}`;
+      } else {
+        return NextResponse.json(
+          { error: "url is required (or provide company + role for manual entry)" },
+          { status: 400 },
+        );
+      }
+    }
     const rawKey = typeof body.jobKey === "string" ? body.jobKey.trim() : "";
     const baseKey = baseJobKey(rawKey || normalizeJobUrl(url));
     const forceNewCycle = Boolean(body.newCycle);
-    if (!url) {
-      return NextResponse.json({ error: "url is required" }, { status: 400 });
-    }
 
     const db = getDb();
     const family = await db
@@ -116,7 +130,7 @@ export async function POST(req: NextRequest) {
           url,
           status,
           notes: notes || latest.notes,
-          source: detectSource(url),
+          source: forceManual ? "manual" : detectSource(url),
           appliedAt: status === "saved" ? latest.appliedAt : latest.appliedAt || now,
           followUpAt: followUpAt ?? latest.followUpAt,
           updatedAt: now,
@@ -148,7 +162,7 @@ export async function POST(req: NextRequest) {
           cycle > 1
             ? `${notes ? `${notes}\n` : ""}Re-opened posting / new apply cycle #${cycle}`.trim()
             : notes,
-        source: detectSource(url),
+        source: forceManual ? "manual" : detectSource(url),
         appliedAt: status === "saved" ? null : now,
         followUpAt,
       })

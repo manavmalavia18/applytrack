@@ -2,7 +2,7 @@
 
 import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { PIPELINE_ORDER, STATUS_LABELS } from "@/lib/statuses";
 import type { ApplicationStatus } from "@/db/schema";
 
@@ -22,6 +22,16 @@ export type AppRow = {
 export function PipelineBoard({ initial }: { initial: AppRow[] }) {
   const [apps, setApps] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    company: "",
+    role: "",
+    url: "",
+    status: "applied" as ApplicationStatus,
+    notes: "",
+  });
 
   const grouped = useMemo(() => {
     const map = Object.fromEntries(PIPELINE_ORDER.map((s) => [s, [] as AppRow[]])) as Record<
@@ -57,6 +67,46 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     setApps((prev) => prev.filter((a) => a.id !== id));
   }
 
+  async function addApplication(e: FormEvent) {
+    e.preventDefault();
+    setAddError(null);
+    const company = form.company.trim();
+    const role = form.role.trim();
+    const url = form.url.trim();
+    if (!company || !role) {
+      setAddError("Company and role are required.");
+      return;
+    }
+    setAdding(true);
+    const res = await fetch("/api/applications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        company,
+        role,
+        url: url || undefined,
+        status: form.status,
+        notes: form.notes.trim(),
+        source: "manual",
+        manual: true,
+      }),
+    });
+    const data = await res.json();
+    setAdding(false);
+    if (!res.ok) {
+      setAddError(data.error || "Failed to add application");
+      return;
+    }
+    if (data.application) {
+      setApps((prev) => {
+        const rest = prev.filter((a) => a.id !== data.application.id);
+        return [data.application, ...rest];
+      });
+    }
+    setForm({ company: "", role: "", url: "", status: "applied", notes: "" });
+    setShowAdd(false);
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-4">
@@ -65,6 +115,16 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
           <p className="text-sm text-zinc-600">{apps.length} applications</p>
         </div>
         <div className="flex gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => {
+              setShowAdd((v) => !v);
+              setAddError(null);
+            }}
+            className="rounded-md bg-teal-800 px-3 py-1.5 text-white hover:bg-teal-900"
+          >
+            {showAdd ? "Cancel" : "Add application"}
+          </button>
           <Link href="/dashboard/settings" className="rounded-md border px-3 py-1.5 hover:bg-zinc-50">
             Extension token
           </Link>
@@ -79,6 +139,84 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
           </form>
         </div>
       </div>
+
+      {showAdd ? (
+        <form
+          onSubmit={addApplication}
+          className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm"
+        >
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-700">
+            Manual entry
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-zinc-600">Company</span>
+              <input
+                required
+                value={form.company}
+                onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
+                className="rounded-md border border-zinc-300 px-3 py-2"
+                placeholder="Acme Inc"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-zinc-600">Role</span>
+              <input
+                required
+                value={form.role}
+                onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+                className="rounded-md border border-zinc-300 px-3 py-2"
+                placeholder="Software Engineer"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <span className="text-zinc-600">Job URL (optional)</span>
+              <input
+                type="url"
+                value={form.url}
+                onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+                className="rounded-md border border-zinc-300 px-3 py-2"
+                placeholder="https://…"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-zinc-600">Status</span>
+              <select
+                value={form.status}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, status: e.target.value as ApplicationStatus }))
+                }
+                className="rounded-md border border-zinc-300 px-3 py-2"
+              >
+                {PIPELINE_ORDER.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-zinc-600">Notes (optional)</span>
+              <input
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="rounded-md border border-zinc-300 px-3 py-2"
+                placeholder="Referral, recruiter, etc."
+              />
+            </label>
+          </div>
+          {addError ? <p className="mt-2 text-sm text-red-600">{addError}</p> : null}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="submit"
+              disabled={adding}
+              className="rounded-md bg-teal-800 px-3 py-1.5 text-sm text-white hover:bg-teal-900 disabled:opacity-50"
+            >
+              {adding ? "Adding…" : "Add to pipeline"}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {PIPELINE_ORDER.map((status) => (

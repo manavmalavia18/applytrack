@@ -171,6 +171,13 @@
         .status.error { background: #fee2e2; color: #991b1b; }
         h1 { font-size: 18px; margin: 0 0 6px; line-height: 1.25; }
         .co { font-size: 14px; color: #475569; margin: 0 0 12px; }
+        .fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+        .fields label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: #475569; }
+        .fields input {
+          border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 10px;
+          font-size: 14px; font-weight: 600; color: #14201b; background: #fff;
+        }
+        .fields input:focus { outline: 2px solid #99f6e4; border-color: #0f766e; }
         .hint { margin-top: 12px; padding: 12px; border-radius: 10px; background: #ecfeff; color: #155e75; font-size: 12px; line-height: 1.45; }
         .hint.err { background: #fef2f2; color: #991b1b; }
         .actions { display: flex; flex-direction: column; gap: 8px; }
@@ -346,10 +353,26 @@
         statusText = STATUS[application?.status] || "Applied";
       }
 
+      const canEdit = !found || stale;
+      const weakTitle =
+        typeof isWeakRole === "function" ? isWeakRole(role) : !role || role === "Job posting";
+
       let html = `
         <div class="status ${statusClass}">${escapeHtml(statusText)}</div>
-        <h1>${escapeHtml(role)}</h1>
-        <p class="co">${escapeHtml(company)}</p>
+        ${
+          canEdit
+            ? `<div class="fields">
+                <label>Role
+                  <input id="role" type="text" value="${escapeHtml(weakTitle ? "" : role)}" placeholder="e.g. Software Engineer" autocomplete="off" />
+                </label>
+                <label>Company
+                  <input id="company" type="text" value="${escapeHtml(
+                    company === "Unknown company" || company === "Unknown" ? "" : company,
+                  )}" placeholder="e.g. Acme Inc" autocomplete="off" />
+                </label>
+              </div>`
+            : `<h1>${escapeHtml(role)}</h1><p class="co">${escapeHtml(company)}</p>`
+        }
         ${autoNote ? `<p class="hint">${escapeHtml(autoNote)}</p>` : ""}
         <div class="actions">
           <button class="act dark" id="draft" ${drafting || busy ? "disabled" : ""}>
@@ -379,11 +402,27 @@
       } else {
         html += `<button class="act primary" id="mark">Mark Applied</button>
           <button class="act ghost" id="save">Save for later</button>
-          <p class="hint">Title is captured from the job listing page and kept through Apply/Submit.</p>`;
+          <p class="hint">Auto-captured from the listing when possible — edit above anytime, then Mark Applied.</p>`;
+      }
+      if (error && error !== "not_configured" && error !== "reload_required") {
+        html += `<p class="hint err">${escapeHtml(error)}</p>`;
       }
       html += `</div>`;
       body.innerHTML = html;
 
+      const syncManual = () => {
+        const roleIn = body.querySelector("#role");
+        const companyIn = body.querySelector("#company");
+        if (!roleIn && !companyIn) return;
+        if (typeof lockManualJob === "function") {
+          parsed = lockManualJob(companyIn?.value, roleIn?.value, parsed || parseJobPage());
+        } else if (parsed) {
+          if (roleIn?.value.trim()) parsed.role = roleIn.value.trim();
+          if (companyIn?.value.trim()) parsed.company = companyIn.value.trim();
+        }
+      };
+      body.querySelector("#role")?.addEventListener("change", syncManual);
+      body.querySelector("#company")?.addEventListener("change", syncManual);
       body.querySelector("#draft")?.addEventListener("click", draftAnswers);
       body.querySelector("#mark")?.addEventListener("click", () => save("applied"));
       body.querySelector("#save")?.addEventListener("click", () => save("saved"));
@@ -503,20 +542,33 @@
         typeof resolveJobPayload === "function"
           ? resolveJobPayload(parsed || parseJobPage())
           : parsed || parseJobPage();
-      // Oracle (and similar): never save profile pages without a real job id
-      if (parsed.source === "oracle" && !parsed.jobKey) {
-        error = "Open the job page (…/job/####), not My Profile.";
-        if (open) render();
-        return;
+      // Prefer values typed in the panel (manual entry / corrections)
+      const roleIn = body.querySelector("#role");
+      const companyIn = body.querySelector("#company");
+      if (roleIn || companyIn) {
+        if (typeof lockManualJob === "function") {
+          parsed =
+            lockManualJob(companyIn?.value, roleIn?.value, parsed) || parsed;
+        } else {
+          if (roleIn?.value.trim()) parsed.role = roleIn.value.trim();
+          if (companyIn?.value.trim()) parsed.company = companyIn.value.trim();
+        }
       }
-      if (typeof isWeakRole === "function" && isWeakRole(parsed.role) && !parsed.jobKey) {
-        error = "Open the job listing first so ApplyTrack can capture the title.";
+      // Oracle (and similar): never save profile pages without a real job id
+      // unless the user typed a title manually.
+      const manualOk =
+        parsed?.manual &&
+        typeof isWeakRole === "function" &&
+        !isWeakRole(parsed.role);
+      if (parsed.source === "oracle" && !parsed.jobKey && !manualOk) {
+        error = "Open the job page (…/job/####), or type the role/company above.";
         if (open) render();
         return;
       }
       if (typeof isWeakRole === "function" && isWeakRole(parsed.role)) {
-        error = "Title not captured yet — go back to the job listing, then Mark Applied.";
-        if (open) render();
+        error = "Enter the job title (and company) above, then try again.";
+        setOpen(true);
+        render();
         return;
       }
       busy = true;
@@ -526,6 +578,7 @@
         url: parsed.url || location.href,
         status,
         newCycle: Boolean(opts.newCycle),
+        ...(parsed.manual ? { manual: true, source: "manual" } : {}),
       });
       busy = false;
       if (!res?.ok) {
