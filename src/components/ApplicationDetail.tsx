@@ -2,7 +2,13 @@
 
 import { format, formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
-import { PIPELINE_ORDER, STATUS_LABELS, formatSource, parseJobKey } from "@/lib/statuses";
+import {
+  PIPELINE_ORDER,
+  STATUS_LABELS,
+  STATUS_STYLES,
+  formatSource,
+  parseJobKey,
+} from "@/lib/statuses";
 import type { ApplicationStatus } from "@/db/schema";
 import type { AppRow } from "@/lib/types";
 
@@ -98,7 +104,14 @@ export function ApplicationDetail({ app, busy, onClose, onSave, onDelete }: Prop
       <aside className="relative flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white shadow-xl sm:max-w-md">
         <header className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-zinc-200 bg-white/95 px-5 py-4 backdrop-blur">
           <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold text-zinc-900">{app.role}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-lg font-semibold text-zinc-900">{app.role}</h2>
+              <span
+                className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[form.status]}`}
+              >
+                {STATUS_LABELS[form.status]}
+              </span>
+            </div>
             <p className="truncate text-sm text-zinc-600">{app.company}</p>
           </div>
           <button

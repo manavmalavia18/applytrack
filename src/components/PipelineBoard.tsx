@@ -4,12 +4,21 @@ import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
 import { FormEvent, MouseEvent, useMemo, useState } from "react";
 import { ApplicationDetail } from "@/components/ApplicationDetail";
-import { PIPELINE_ORDER, STATUS_LABELS, formatSource } from "@/lib/statuses";
+import {
+  PIPELINE_ORDER,
+  STATUS_DOT,
+  STATUS_LABELS,
+  STATUS_STYLES,
+  STATUS_VERB,
+  formatSource,
+} from "@/lib/statuses";
 import { exportApplicationsToExcel } from "@/lib/export";
 import type { AppRow } from "@/lib/types";
 import type { ApplicationStatus } from "@/db/schema";
 
 export type { AppRow } from "@/lib/types";
+
+type FilterValue = "all" | ApplicationStatus;
 
 export function PipelineBoard({ initial }: { initial: AppRow[] }) {
   const [apps, setApps] = useState(initial);
@@ -18,6 +27,7 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<FilterValue>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [form, setForm] = useState({
@@ -28,7 +38,7 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     notes: "",
   });
 
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return apps;
     return apps.filter((a) =>
@@ -38,17 +48,22 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     );
   }, [apps, search]);
 
-  const grouped = useMemo(() => {
-    const map = Object.fromEntries(PIPELINE_ORDER.map((s) => [s, [] as AppRow[]])) as Record<
+  const counts = useMemo(() => {
+    const map = Object.fromEntries(PIPELINE_ORDER.map((s) => [s, 0])) as Record<
       ApplicationStatus,
-      AppRow[]
+      number
     >;
-    for (const app of filtered) {
-      const status = (app.status in STATUS_LABELS ? app.status : "applied") as ApplicationStatus;
-      map[status].push(app);
+    for (const app of searched) {
+      const status = normalizeStatus(app.status);
+      map[status] += 1;
     }
     return map;
-  }, [filtered]);
+  }, [searched]);
+
+  const filtered = useMemo(() => {
+    if (filter === "all") return searched;
+    return searched.filter((a) => normalizeStatus(a.status) === filter);
+  }, [searched, filter]);
 
   const selected = useMemo(
     () => (selectedId ? apps.find((a) => a.id === selectedId) || null : null),
@@ -275,73 +290,105 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
         </form>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {PIPELINE_ORDER.map((status) => (
-          <section key={status} className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3">
-            <header className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-700">
-                {STATUS_LABELS[status]}
-              </h2>
-              <span className="rounded-full bg-white px-2 py-0.5 text-xs text-zinc-500">
-                {grouped[status].length}
-              </span>
-            </header>
-            <ul className="flex flex-col gap-2">
-              {grouped[status].map((app) => (
-                <li
-                  key={app.id}
-                  onClick={() => setSelectedId(app.id)}
-                  className="cursor-pointer rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition hover:border-teal-300 hover:shadow-md"
-                >
-                  <a
-                    href={app.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={stop}
-                    className="font-medium text-teal-800 hover:underline"
-                  >
-                    {app.role}
-                  </a>
-                  <p className="text-sm text-zinc-700">{app.company}</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {formatSource(app.source)}
-                    {app.appliedAt
-                      ? ` · applied ${formatDistanceToNow(new Date(app.appliedAt), { addSuffix: true })}`
-                      : null}
-                    {app.followUpAt
-                      ? ` · follow-up ${formatDistanceToNow(new Date(app.followUpAt), { addSuffix: true })}`
-                      : null}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-1" onClick={stop}>
-                    {PIPELINE_ORDER.filter((s) => s !== status).map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        disabled={busy === app.id}
-                        onClick={() => updateStatus(app.id, s)}
-                        className="rounded border px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
-                      >
-                        → {STATUS_LABELS[s]}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      disabled={busy === app.id}
-                      onClick={() => remove(app.id)}
-                      className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-              {grouped[status].length === 0 ? (
-                <li className="px-1 py-6 text-center text-xs text-zinc-400">Empty</li>
-              ) : null}
-            </ul>
-          </section>
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChip
+          active={filter === "all"}
+          onClick={() => setFilter("all")}
+          label="All"
+          count={searched.length}
+        />
+        {PIPELINE_ORDER.map((s) => (
+          <FilterChip
+            key={s}
+            active={filter === s}
+            onClick={() => setFilter(s)}
+            label={STATUS_LABELS[s]}
+            count={counts[s]}
+            dotClass={STATUS_DOT[s]}
+          />
         ))}
       </div>
+
+      <ul className="flex flex-col gap-2">
+        {filtered.map((app) => {
+          const status = normalizeStatus(app.status);
+          return (
+            <li
+              key={app.id}
+              onClick={() => setSelectedId(app.id)}
+              className="group cursor-pointer rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm transition hover:border-teal-300 hover:shadow-md"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={app.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={stop}
+                      className="font-medium text-zinc-900 hover:text-teal-800 hover:underline"
+                    >
+                      {app.role}
+                    </a>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[status]}`}
+                    >
+                      {STATUS_LABELS[status]}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-sm text-zinc-600">{app.company}</p>
+                  <p className="mt-1 text-xs text-zinc-400">
+                    {formatSource(app.source)}
+                    {app.appliedAt
+                      ? ` · ${STATUS_VERB[status]} ${formatDistanceToNow(new Date(app.appliedAt), { addSuffix: true })}`
+                      : null}
+                    {app.followUpAt ? (
+                      <span className="text-amber-600">
+                        {" "}
+                        · follow up{" "}
+                        {formatDistanceToNow(new Date(app.followUpAt), { addSuffix: true })}
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+
+                <div
+                  className="flex shrink-0 items-center gap-1.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100"
+                  onClick={stop}
+                >
+                  <select
+                    value={status}
+                    disabled={busy === app.id}
+                    onChange={(e) => updateStatus(app.id, e.target.value as ApplicationStatus)}
+                    className="rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+                  >
+                    {PIPELINE_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {STATUS_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={busy === app.id}
+                    onClick={() => remove(app.id)}
+                    className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </li>
+          );
+        })}
+        {filtered.length === 0 ? (
+          <li className="rounded-xl border border-dashed border-zinc-300 bg-white/60 px-4 py-12 text-center text-sm text-zinc-400">
+            {apps.length === 0
+              ? "No applications yet — add one or track from the extension."
+              : "Nothing matches this filter."}
+          </li>
+        ) : null}
+      </ul>
 
       {selected ? (
         <ApplicationDetail
@@ -353,5 +400,45 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
         />
       ) : null}
     </div>
+  );
+}
+
+function normalizeStatus(status: string): ApplicationStatus {
+  return (status in STATUS_LABELS ? status : "applied") as ApplicationStatus;
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+  count,
+  dotClass,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  dotClass?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
+        active
+          ? "border-teal-800 bg-teal-800 text-white shadow-sm"
+          : "border-zinc-200 bg-white text-zinc-600 hover:border-teal-300 hover:text-teal-800"
+      }`}
+    >
+      {dotClass ? <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} /> : null}
+      {label}
+      <span
+        className={`rounded-full px-1.5 text-xs ${
+          active ? "bg-white/20" : "bg-zinc-100 text-zinc-500"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
   );
 }

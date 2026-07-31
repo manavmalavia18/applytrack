@@ -110,12 +110,12 @@
     if (document.getElementById("applytrack-host")) return;
 
     const STATUS = {
-      saved: "Saved",
-      applied: "Applied",
-      oa: "OA",
-      interview: "Interview",
+      saved: "Wishlist",
+      applied: "Sent",
+      oa: "Assessment",
+      interview: "Interviewing",
       offer: "Offer",
-      rejected: "Rejected",
+      rejected: "Closed",
     };
 
     let open = false;
@@ -364,7 +364,7 @@
       tab.classList.toggle("applied", found && !stale);
       if (dead) tab.textContent = "Reload tab";
       else if (found && stale) tab.textContent = "Re-apply?";
-      else if (found) tab.textContent = STATUS[application?.status] || "Applied";
+      else if (found) tab.textContent = STATUS[application?.status] || "Sent";
       else tab.textContent = "ApplyTrack";
     }
 
@@ -414,10 +414,10 @@
         statusClass = "error";
         statusText = "Error";
       } else if (found && stale) {
-        statusText = "Applied before";
+        statusText = "Sent before";
       } else if (found) {
         statusClass = "applied";
-        statusText = STATUS[application?.status] || "Applied";
+        statusText = STATUS[application?.status] || "Sent";
       }
 
       const canEdit = !found || stale;
@@ -483,7 +483,7 @@
       } else if (found) {
         html += `<a class="act ghost" href="https://applytrack-rust.vercel.app/dashboard" target="_blank">Edit in job tracker →</a>`;
       } else {
-        html += `<button class="act primary" id="mark">Mark Applied</button>
+        html += `<button class="act primary" id="mark">Mark Sent</button>
           <button class="act ghost" id="save">Save for later</button>
           <p class="hint">Captured details stay locked through Apply/Submit. Edit above only if capture missed.</p>`;
       }
@@ -744,7 +744,7 @@
         /* ignore */
       }
       if (opts.auto) {
-        autoNote = "Logged Applied after the site confirmed your submission.";
+        autoNote = "Logged as sent after the site confirmed your submission.";
         setOpen(true);
       } else {
         setOpen(true);

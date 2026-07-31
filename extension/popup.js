@@ -53,7 +53,7 @@ document.getElementById("mark").addEventListener("click", async () => {
     });
     statusEl.textContent = res?.ok
       ? res.created
-        ? "Marked applied."
+        ? "Marked sent."
         : "Already tracked — updated."
       : res?.error || "Failed";
   } catch (e) {
