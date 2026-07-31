@@ -851,6 +851,7 @@ function parsePaycom() {
 function parseDayforce() {
   // https://jobs.dayforcehcm.com/en-US/nbhbank/bankmidwest/jobs/32164
   // https://jobs.dayforcehcm.com/en-US/fng/119397/jobs/14233  (119397 = org id, not company)
+  // https://jobs.dayforcehcm.com/hightower/candidateportal/jobs/8627/apply/manualApplication
   const parts = location.pathname.split("/").filter(Boolean);
   const jobsIdx = parts.findIndex((p) => /^jobs?$/i.test(p));
   const jobId =
@@ -859,8 +860,22 @@ function parseDayforce() {
       : "") ||
     location.pathname.match(/\/jobs\/(\d+)/i)?.[1] ||
     "";
-  const siteSlug = jobsIdx >= 1 ? parts[jobsIdx - 1] : "";
-  const clientSlug = jobsIdx >= 2 ? parts[jobsIdx - 2] : "";
+
+  // Locale / portal / wizard chrome — never board or company slugs
+  function isDayforcePathChrome(seg) {
+    const s = (seg || "").trim();
+    if (!s || /^\d+$/.test(s)) return true;
+    return /^(en(?:-[a-z]{2})?|fr(?:-[a-z]{2})?|es(?:-[a-z]{2})?|de(?:-[a-z]{2})?|pt(?:-[a-z]{2})?|candidateportal|portal|jobs?|job|apply|manual|manualapplication|application|myprofile|signin|sign-in|home)$/i.test(
+      s,
+    );
+  }
+
+  // Meaningful slugs before /jobs/ (skip en-US, candidateportal, org ids, …)
+  const boardSlugs =
+    jobsIdx >= 0 ? parts.slice(0, jobsIdx).filter((p) => !isDayforcePathChrome(p)) : [];
+  // Prefer site brand (bankmidwest) over client code (nbhbank / fng) when both exist
+  const siteSlug = boardSlugs[boardSlugs.length - 1] || "";
+  const clientSlug = boardSlugs[boardSlugs.length - 2] || "";
 
   const bad =
     /^(search jobs|sign in|careers|job description|apply|save|share|posted|home|english|united states|manual application|manual apply)$/i;
@@ -935,18 +950,18 @@ function parseDayforce() {
     else if (/\bBank Midwest\b/i.test(body)) company = "Bank Midwest";
   }
 
-  // Path slugs last: prefer site brand (bankmidwest) over client code (nbhbank / fng).
-  // Skip pure-digit site segments (org ids like 119397).
+  // Path slugs last: board/site brand (hightower, bankmidwest) over client code (nbhbank / fng).
+  // Portal chrome (candidateportal) and org ids already filtered from boardSlugs.
   if (!company || isWeakCompany(company, "dayforce")) {
-    const fromSite = /^\d+$/.test(siteSlug) ? "" : acceptCompany(titleCaseSlug(siteSlug));
+    const fromSite = acceptCompany(titleCaseSlug(siteSlug));
     const fromClient = acceptCompany(titleCaseSlug(clientSlug));
     company = fromSite || fromClient || company;
   }
 
   company = scrubCompany(company, "dayforce") || company;
 
-  // Client slug is the stable key (fng); never use numeric org id in jobKey
-  const keySlug = (/^\d+$/.test(clientSlug) ? "" : clientSlug) || (/^\d+$/.test(siteSlug) ? "" : siteSlug) || "job";
+  // Prefer client code (fng) as stable key when present; else board slug (hightower)
+  const keySlug = clientSlug || siteSlug || "job";
   const jobKey = jobId ? `dayforce:${keySlug.toLowerCase()}:${jobId}` : null;
 
   return {

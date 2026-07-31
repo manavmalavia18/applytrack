@@ -171,6 +171,15 @@ const ApplyTrackATS = {
       const compact = c.replace(/\s/g, "");
       // Org/client ids in the path (e.g. /fng/119397/jobs/…) are never company names
       if (/^\d+$/.test(c)) return "";
+      // Portal / apply-wizard path chrome (e.g. …/hightower/candidateportal/jobs/…)
+      if (
+        /^(candidate\s*portal|manual(\s*application)?|apply|jobs?|portal|home|sign[\s-]?in|my\s*profile|application)$/i.test(
+          c,
+        ) ||
+        /^(en|fr|es|de|pt)([\s\-_][a-z]{2})?$/i.test(c)
+      ) {
+        return "";
+      }
       // Broken header alts like "Bank Mid 200"
       if (/^bankmid\d+$/i.test(compact) || /^bank\s*mid\s*\d+$/i.test(c)) return "Bank Midwest";
       if (/^bankmidwest$/i.test(compact) || /^bank\s*midwest$/i.test(c)) return "Bank Midwest";
@@ -187,12 +196,20 @@ const ApplyTrackATS = {
     },
     isWeakCompany(t) {
       const c = (t || "").trim();
+      const compact = c.replace(/\s/g, "");
       // Pure digits (path org ids) and opaque short client codes (fng) are never final company
+      // Also reject portal/wizard path segments mistaken for the employer
       return (
         /^dayforce$/i.test(c) ||
         /^bank\s*mid\s*\d+$/i.test(c) ||
         /^\d+$/.test(c) ||
-        /^[a-z]{2,4}$/i.test(c)
+        /^[a-z]{2,4}$/i.test(c) ||
+        /^(candidate\s*portal|manual(\s*application)?|apply|jobs?|portal|home|sign[\s-]?in|my\s*profile|application)$/i.test(
+          c,
+        ) ||
+        /^candidateportal$/i.test(compact) ||
+        /^manualapplication$/i.test(compact) ||
+        /^(en|fr|es|de|pt)([\s\-_][a-z]{2})?$/i.test(c)
       );
     },
   },
