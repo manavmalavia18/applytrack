@@ -850,6 +850,7 @@ function parsePaycom() {
 
 function parseDayforce() {
   // https://jobs.dayforcehcm.com/en-US/nbhbank/bankmidwest/jobs/32164
+  // https://jobs.dayforcehcm.com/en-US/fng/119397/jobs/14233  (119397 = org id, not company)
   const parts = location.pathname.split("/").filter(Boolean);
   const jobsIdx = parts.findIndex((p) => /^jobs?$/i.test(p));
   const jobId =
@@ -889,35 +890,64 @@ function parseDayforce() {
       .trim();
   }
 
-  // Prefer site brand (bankmidwest) over client code (nbhbank)
-  let company = scrubCompany(titleCaseSlug(siteSlug), "dayforce");
-  if (!company || isWeakCompany(company, "dayforce")) {
-    company = scrubCompany(titleCaseSlug(clientSlug), "dayforce");
+  function acceptCompany(raw) {
+    const scrubbed = scrubCompany((raw || "").trim().replace(/\s+/g, " "), "dayforce");
+    if (!scrubbed || isWeakCompany(scrubbed, "dayforce")) return "";
+    if (/^(logo|image|dayforce)$/i.test(scrubbed)) return "";
+    return scrubbed;
   }
 
-  const fromLogo = textOf(
-    document.querySelector("header img[alt], a[href*='careers'] img[alt], .logo img[alt]"),
+  // Brand signals first — never lock a numeric path segment (119397) as company
+  let company = "";
+
+  const fromLogo = acceptCompany(
+    textOf(
+      document.querySelector(
+        "header img[alt], a[href*='careers'] img[alt], .logo img[alt], [class*='logo'] img[alt], img[alt*='Flex'], img[alt*='Bank']",
+      ),
+    ),
   );
-  if (
-    fromLogo &&
-    fromLogo.length < 60 &&
-    !isWeakCompany(fromLogo, "dayforce") &&
-    !/logo|image|dayforce/i.test(fromLogo)
-  ) {
-    company = scrubCompany(fromLogo, "dayforce");
+  if (fromLogo) company = fromLogo;
+
+  if (!company) {
+    const ogSite = acceptCompany(
+      document.querySelector('meta[property="og:site_name"]')?.getAttribute("content"),
+    );
+    if (ogSite) company = ogSite;
   }
 
-  // Description often names the employer (NBH Bank)
-  if (!company || isWeakCompany(company, "dayforce")) {
-    const body = (document.body?.innerText || "").slice(0, 3000);
-    if (/\bNBH Bank\b/i.test(body)) company = "NBH Bank";
+  if (!company) {
+    const headerBrand = acceptCompany(
+      textOf(
+        document.querySelector(
+          "header [class*='company'], header [class*='brand'], [class*='employer'], [class*='ClientName']",
+        ),
+      ),
+    );
+    if (headerBrand && headerBrand.length < 60) company = headerBrand;
+  }
+
+  // Description / JD often names the employer
+  if (!company) {
+    const body = (document.body?.innerText || "").slice(0, 4000);
+    if (/\bFlex[\s\-]*N[\s\-]*Gate\b/i.test(body)) company = "Flex-N-Gate";
+    else if (/\bNBH Bank\b/i.test(body)) company = "NBH Bank";
     else if (/\bBank Midwest\b/i.test(body)) company = "Bank Midwest";
   }
+
+  // Path slugs last: prefer site brand (bankmidwest) over client code (nbhbank / fng).
+  // Skip pure-digit site segments (org ids like 119397).
+  if (!company || isWeakCompany(company, "dayforce")) {
+    const fromSite = /^\d+$/.test(siteSlug) ? "" : acceptCompany(titleCaseSlug(siteSlug));
+    const fromClient = acceptCompany(titleCaseSlug(clientSlug));
+    company = fromSite || fromClient || company;
+  }
+
   company = scrubCompany(company, "dayforce") || company;
 
-  const jobKey = jobId
-    ? `dayforce:${(clientSlug || siteSlug || "job").toLowerCase()}:${jobId}`
-    : null;
+  // Client slug is the stable key (fng); never use numeric org id in jobKey
+  const keySlug = (/^\d+$/.test(clientSlug) ? "" : clientSlug) || (/^\d+$/.test(siteSlug) ? "" : siteSlug) || "job";
+  const jobKey = jobId ? `dayforce:${keySlug.toLowerCase()}:${jobId}` : null;
 
   return {
     company: company || "Unknown",
@@ -1062,6 +1092,19 @@ function findGreenhouseBoardToken() {
   return "";
 }
 
+/** Brand label from custom Greenhouse hosts: careers.roblox.com → roblox */
+function greenhouseHostBrand(hostname) {
+  const host = (hostname || "").replace(/^www\./, "").toLowerCase();
+  if (!host || host.includes("greenhouse")) return "";
+  const skip = /^(www|careers?|jobs?|job|apply|talent|recruiting|boards?|cdn|api|app)$/i;
+  const tld = /^(com|org|net|io|co|us|uk|ai|app|dev|info|biz|edu|gov|ca|au|de|fr|jp|in)$/i;
+  for (const part of host.split(".")) {
+    if (!part || skip.test(part) || tld.test(part)) continue;
+    return part.replace(/[-_]+/g, " ");
+  }
+  return "";
+}
+
 /** Fill weak Greenhouse parent-frame parses from the public boards API. */
 async function enrichGreenhouseFromApi(parsed) {
   if (!parsed || parsed.source !== "greenhouse") return parsed;
@@ -1081,10 +1124,7 @@ async function enrichGreenhouseFromApi(parsed) {
   if (!roleWeak && !coWeak) return parsed;
 
   const host = location.hostname.replace(/^www\./, "");
-  const hostGuess =
-    !host.includes("greenhouse") && host.split(".")[0] && !/^(www|careers|jobs|job)$/i.test(host.split(".")[0])
-      ? host.split(".")[0]
-      : "";
+  const hostGuess = greenhouseHostBrand(host);
   const tokens = [...new Set([findGreenhouseBoardToken(), hostGuess].filter(Boolean))];
   if (!tokens.length) return parsed;
 
@@ -1126,7 +1166,7 @@ function parseGreenhouse() {
     "";
 
   const badTitle =
-    /^(job details|loading(\s+job\s+details?)?.*|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application)\b/i;
+    /^(job details|loading(\s+job\s+details?)?.*|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application|work at .+|early careers?|newsroom|opportunities)\b/i;
 
   function pickRole(...candidates) {
     for (const raw of candidates) {
@@ -1138,6 +1178,20 @@ function parseGreenhouse() {
       return t;
     }
     return "";
+  }
+
+  function weakCo(c) {
+    const t = (c || "").trim();
+    if (!t || badTitle.test(t) || /loading/i.test(t)) return true;
+    return typeof isWeakCompany === "function" && isWeakCompany(t, "greenhouse");
+  }
+
+  function acceptCompany(raw) {
+    let t = (raw || "").trim().replace(/\s+/g, " ");
+    if (!t || t.length > 80 || weakCo(t)) return "";
+    if (typeof scrubCompany === "function") t = scrubCompany(t, "greenhouse") || "";
+    if (!t || weakCo(t)) return "";
+    return t;
   }
 
   const docTitle = document.title
@@ -1154,39 +1208,96 @@ function parseGreenhouse() {
     ...docTitle,
   );
 
-  let company =
-    textOf(document.querySelector(".company-name")) ||
-    textOf(document.querySelector('[class*="company"]')) ||
-    "";
-  if (company && (badTitle.test(company) || /loading/i.test(company))) company = "";
+  let company = "";
+
+  // Prefer brand signals on custom domains — never nav chrome ("Careers")
+  const logo = textOf(
+    document.querySelector(
+      "header img[alt], a[href='/'] img[alt], .logo img[alt], [class*='logo'] img[alt], img[alt*='logo' i], img[alt]",
+    ),
+  );
+  company = acceptCompany(logo);
+
+  if (!company) {
+    company = acceptCompany(
+      document.querySelector('meta[property="og:site_name"]')?.getAttribute("content"),
+    );
+  }
+
+  if (!company) {
+    company = acceptCompany(
+      document.querySelector('meta[name="application-name"]')?.getAttribute("content"),
+    );
+  }
+
+  if (!company) {
+    try {
+      for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+        const raw = (el.textContent || "").trim();
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        const nodes = Array.isArray(data) ? data : [data];
+        for (const node of nodes) {
+          if (!node || typeof node !== "object") continue;
+          if (!/jobposting/i.test(String(node["@type"] || ""))) continue;
+          const org = node.hiringOrganization;
+          const orgName = typeof org === "string" ? org : org?.name;
+          company = acceptCompany(orgName);
+          if (company) break;
+        }
+        if (company) break;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!company) {
+    company = acceptCompany(
+      textOf(document.querySelector(".company-name")) ||
+        textOf(document.querySelector('[class*="company-name"], [data-company]')),
+    );
+  }
 
   // job-boards.greenhouse.io/{board}/jobs/{id}
   const board =
     findGreenhouseBoardToken() || location.pathname.split("/").filter(Boolean)[0] || "";
   if (
-    (!company || /greenhouse|job.?board/i.test(company)) &&
+    (!company || weakCo(company)) &&
     board &&
     !/^(jobs|embeds|embed)$/i.test(board)
   ) {
-    company = board.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    company =
+      acceptCompany(board.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())) ||
+      company;
   }
-  if (!company) {
+
+  if (!company || weakCo(company)) {
     const host = location.hostname.replace(/^www\./, "");
     if (!host.includes("greenhouse")) {
-      // Custom career host — brand from subdomain / root label
-      const label = host.split(".")[0].replace(/-/g, " ");
-      if (label && !/^(www|careers|jobs|job)$/i.test(label)) {
-        company = label.charAt(0).toUpperCase() + label.slice(1);
+      // careers.roblox.com → Roblox (skip careers/jobs chrome labels)
+      const brand = greenhouseHostBrand(host);
+      if (brand) {
+        company =
+          acceptCompany(brand.replace(/\b\w/g, (c) => c.toUpperCase())) || company;
       }
     } else {
       company =
-        document.title.split(" at ").pop()?.replace(/\s*\|.*/, "").trim() || host;
+        acceptCompany(document.title.split(" at ").pop()?.replace(/\s*\|.*/, "").trim()) ||
+        company;
     }
   }
-  if (/flock\s*homes/i.test(company) || /^flockhomes$/i.test(company.replace(/\s/g, ""))) {
-    company = "Flock Homes";
+
+  // "Software Engineer, User Frameworks | Roblox"
+  if (!company || weakCo(company)) {
+    const fromTitle = document.title.match(/\|\s*([^|]+?)\s*$/)?.[1]?.trim();
+    company = acceptCompany(fromTitle) || company;
   }
-  if (/^laika$/i.test(company)) company = "LAIKA";
+
+  if (typeof scrubCompany === "function") {
+    company = scrubCompany(company, "greenhouse") || company;
+  }
+  if (weakCo(company)) company = "";
 
   return {
     company,

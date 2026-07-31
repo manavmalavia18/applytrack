@@ -169,10 +169,15 @@ const ApplyTrackATS = {
     scrubCompany(t) {
       const c = (t || "").trim().replace(/\s+/g, " ");
       const compact = c.replace(/\s/g, "");
+      // Org/client ids in the path (e.g. /fng/119397/jobs/…) are never company names
+      if (/^\d+$/.test(c)) return "";
       // Broken header alts like "Bank Mid 200"
       if (/^bankmid\d+$/i.test(compact) || /^bank\s*mid\s*\d+$/i.test(c)) return "Bank Midwest";
       if (/^bankmidwest$/i.test(compact) || /^bank\s*midwest$/i.test(c)) return "Bank Midwest";
       if (/^nbhbank$/i.test(compact) || /^nbh\s*bank$/i.test(c)) return "NBH Bank";
+      // Short client codes → known brands (map key only; never leave as final name)
+      if (/^fng$/i.test(compact)) return "Flex-N-Gate";
+      if (/^flex[\s\-]*n[\s\-]*gate$/i.test(c)) return "Flex-N-Gate";
       return c;
     },
     isWeakRole(t) {
@@ -181,7 +186,14 @@ const ApplyTrackATS = {
       );
     },
     isWeakCompany(t) {
-      return /^dayforce$/i.test(t) || /^bank\s*mid\s*\d+$/i.test(t);
+      const c = (t || "").trim();
+      // Pure digits (path org ids) and opaque short client codes (fng) are never final company
+      return (
+        /^dayforce$/i.test(c) ||
+        /^bank\s*mid\s*\d+$/i.test(c) ||
+        /^\d+$/.test(c) ||
+        /^[a-z]{2,4}$/i.test(c)
+      );
     },
   },
 
@@ -397,10 +409,39 @@ const ApplyTrackATS = {
   /**
    * Greenhouse embeds on custom career sites often paint "Loading job details"
    * in the parent frame while the real title lives in a cross-origin iframe.
+   * Custom domains (careers.roblox.com?gh_jid=…) must not lock nav chrome as company.
    */
   greenhouse: {
+    scrubCompany(t) {
+      let c = (t || "").trim().replace(/\s+/g, " ");
+      // Nav phrases — drop entirely (do not strip to "Early")
+      if (/^early careers?$/i.test(c) || /^work at .+$/i.test(c)) return "";
+      c = c
+        .replace(/\s+logo$/i, "")
+        .replace(/^logo\s+(of\s+)?/i, "")
+        .replace(/\s*[-–—|]\s*(home|logo|careers?|jobs?|recruiting)\s*$/i, "")
+        .replace(/\s+(corporate|careers?|jobs?|recruiting)\s*$/i, "")
+        .trim();
+      const compact = c.replace(/\s/g, "");
+      if (/^laika$/i.test(c)) return "LAIKA";
+      if (/flock\s*homes/i.test(c) || /^flockhomes$/i.test(compact)) return "Flock Homes";
+      return c;
+    },
     isWeakRole(t) {
       return /^loading(\s+job\s+details?)?\b/i.test(t) || /^job details$/i.test(t);
+    },
+    isWeakCompany(t) {
+      const s = (t || "").trim();
+      if (!s) return true;
+      // Nav / career-site chrome — never the employer (careers.roblox.com → "Careers")
+      if (
+        /^(careers?|jobs?|opportunities|newsroom|home|about|overview|early careers?|work at .+|all jobs|job boards?|greenhouse)$/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      return false;
     },
   },
 
@@ -433,7 +474,7 @@ function isWeakRoleBase(role) {
 function isWeakCompanyBase(company) {
   const t = (company || "").trim();
   if (!t || t.length < 2) return true;
-  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career|pinpoint|pinpointhq|rippling|ats)\b/i.test(
+  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|careers?|pinpoint|pinpointhq|rippling|ats)\b/i.test(
     t,
   );
 }
