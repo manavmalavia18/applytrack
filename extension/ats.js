@@ -277,6 +277,55 @@ const ApplyTrackATS = {
     },
   },
 
+  /**
+   * UKG Pro / UltiPro — recruiting.ultipro.com/{tenant}/JobBoard/...
+   * Opaque tenants (tos1002tabs) must never become fake companies (Tostabs).
+   */
+  ultipro: {
+    scrubCompany(t) {
+      let c = (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/\s+logo$/i, "")
+        .replace(/^logo\s+(of\s+)?/i, "")
+        .trim();
+      const compact = c.replace(/\s/g, "");
+      if (
+        /^(toshiba|tostabs|tos1002tabs)$/i.test(compact) ||
+        /^toshiba$/i.test(c)
+      ) {
+        return "Toshiba";
+      }
+      if (
+        /^(powersecure|powpows|pow1009pows)$/i.test(compact) ||
+        /^power\s*secure$/i.test(c)
+      ) {
+        return "PowerSecure";
+      }
+      // ALL-CAPS logo alts → Title case
+      if (/^[A-Z0-9][A-Z0-9 .&'’-]*$/.test(c) && /[A-Z]/.test(c) && c.length <= 40) {
+        c = c
+          .toLowerCase()
+          .replace(/\b\w/g, (ch) => ch.toUpperCase())
+          .trim();
+      }
+      return c;
+    },
+    isWeakCompany(t) {
+      const s = (t || "").trim();
+      const compact = s.replace(/\s/g, "");
+      if (/^(ukg|ultipro|ulti\s*pro)$/i.test(s)) return true;
+      // Opaque tenant path segments
+      if (/^[a-z]{2,}\d+[a-z]{2,}$/i.test(compact)) return true;
+      if (/^[a-z0-9]{6,}$/i.test(compact) && /\d/.test(compact) && /[a-z]/i.test(compact)) {
+        return true;
+      }
+      // Digit-stripped mangled tenants (tos1002tabs → Tostabs)
+      if (/^(tostabs|powpows)$/i.test(compact)) return true;
+      return false;
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 

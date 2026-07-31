@@ -1589,12 +1589,24 @@ function parsePhenom() {
 }
 
 function parseUltiPro() {
-  // recruiting.ultipro.com/pow1009pows/JobBoard/.../OpportunityDetail?opportunityId=...
+  // recruiting.ultipro.com/tos1002tabs/JobBoard/.../OpportunityDetail?opportunityId=...
+  // Never title-case / digit-strip opaque tenant codes (tos1002tabs → "Tostabs").
   const params = new URLSearchParams(location.search);
+  const pathParts = location.pathname.split("/").filter(Boolean);
+  const tenant = pathParts[0] || "";
+  const boardId =
+    params.get("jobBoardId") ||
+    params.get("JobBoardId") ||
+    (pathParts[1]?.toLowerCase() === "jobboard" &&
+    pathParts[2] &&
+    !/^(opportunity|application)/i.test(pathParts[2])
+      ? pathParts[2]
+      : "");
   const opportunityId =
     params.get("opportunityId") ||
     params.get("OpportunityId") ||
     location.pathname.match(/OpportunityDetail\/([^/?#]+)/i)?.[1] ||
+    params.get("jobId") ||
     "";
 
   const body = (document.body?.innerText || "").slice(0, 5000);
@@ -1604,6 +1616,35 @@ function parseUltiPro() {
 
   const bad =
     /^(apply now|apply with linkedin|job category|requisition|posted date|full-time|hybrid|careers?|jobs?|home|sign in|customer care)\b/i;
+
+  function looksLikeTenantCode(s) {
+    const t = (s || "").trim();
+    if (!t || /\s/.test(t)) return false;
+    // Opaque UKG path tenants: tos1002tabs, pow1009pows
+    if (/^[a-z]{2,}\d+[a-z]{2,}$/i.test(t)) return true;
+    if (/^[a-z0-9]{6,}$/i.test(t) && /\d/.test(t) && /[a-z]/i.test(t)) return true;
+    return false;
+  }
+
+  function imgAlt(sel) {
+    const el = document.querySelector(sel);
+    if (!el) return "";
+    return (el.getAttribute("alt") || el.alt || "").trim().replace(/\s+/g, " ");
+  }
+
+  /** Prefer brand alts; scrub "logo" suffix — do not reject "TOSHIBA logo". */
+  function cleanBrand(raw) {
+    let c = (raw || "").trim().replace(/\s+/g, " ");
+    c = c
+      .replace(/\s+logo$/i, "")
+      .replace(/^logo\s+(of\s+)?/i, "")
+      .trim();
+    if (!c || c.length < 2 || c.length > 60) return "";
+    if (/^(logo|ulti|ukg|ultipro|image)$/i.test(c)) return "";
+    if (/logo|ulti\s*pro|\bukg\b|image/i.test(c)) return "";
+    if (looksLikeTenantCode(c)) return "";
+    return c;
+  }
 
   function pick(...cands) {
     for (const raw of cands) {
@@ -1627,21 +1668,68 @@ function parseUltiPro() {
     .replace(/^application (submitted|received) for\s+/i, "")
     .trim();
 
-  // Tenant slug: pow1009pows → PowerSecure
-  const tenant = location.pathname.split("/").filter(Boolean)[0] || "";
   let company = "";
-  if (/pows|powersecure/i.test(tenant) || /powersecure/i.test(body)) {
+
+  // Known opaque tenants → brand (never digit-strip the path segment)
+  if (/pow1009pows|pows|powersecure/i.test(tenant) || /powersecure/i.test(body)) {
     company = "PowerSecure";
+  } else if (/tos1002tabs|toshiba|tostabs/i.test(tenant)) {
+    company = "Toshiba";
   }
+
+  // Logo alt / header brand (img alt — textOf(img) is always empty)
   if (!company) {
-    company =
-      textOf(document.querySelector("header img[alt], .logo img[alt], [class*='logo'] img[alt]")) ||
-      "";
-    if (/logo|ulti|ukg|image/i.test(company) || company.length > 60) company = "";
+    const logo =
+      cleanBrand(
+        imgAlt(
+          "header img[alt], .logo img[alt], [class*='logo'] img[alt], a[class*='logo'] img[alt], [class*='brand'] img[alt]",
+        ),
+      ) ||
+      cleanBrand(
+        [...document.querySelectorAll("img[alt]")]
+          .map((img) => (img.getAttribute("alt") || "").trim())
+          .find((a) => cleanBrand(a)) || "",
+      );
+    if (logo) company = logo;
   }
-  if (!company && tenant) {
+
+  if (!company) {
+    const og = document
+      .querySelector('meta[property="og:site_name"]')
+      ?.getAttribute("content")
+      ?.trim();
+    company = cleanBrand(og);
+  }
+
+  if (!company) {
+    for (const part of document.title.split(/\s*[|–—]\s*/).map((s) => s.trim())) {
+      if (!part || bad.test(part) || /careers?|jobs?|ukg|ultipro|apply/i.test(part)) continue;
+      const cleaned = cleanBrand(part);
+      if (
+        cleaned &&
+        cleaned.length < 40 &&
+        cleaned.toLowerCase() !== role.toLowerCase() &&
+        !looksLikeTenantCode(cleaned)
+      ) {
+        company = cleaned;
+        break;
+      }
+    }
+  }
+
+  // Explicitly reject tenant path segments — never invent a company from them
+  if (
+    company &&
+    (looksLikeTenantCode(company) ||
+      (looksLikeTenantCode(tenant) &&
+        company.replace(/\s/g, "").toLowerCase() ===
+          tenant.replace(/\d+/g, "").toLowerCase()))
+  ) {
+    company = "";
+  }
+  if (!company && tenant && !looksLikeTenantCode(tenant) && !/\d/.test(tenant)) {
+    // Rare readable slug without digits — title-case only when safe
     company = tenant
-      .replace(/\d+/g, "")
       .replace(/([a-z])([A-Z])/g, "$1 $2")
       .replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase())
@@ -1649,11 +1737,17 @@ function parseUltiPro() {
   }
   if (!company) company = "UKG";
 
+  if (typeof scrubCompany === "function") {
+    company = scrubCompany(company, "ultipro") || company;
+  }
+
   const jobKey = opportunityId
     ? `ultipro:${opportunityId}`
     : reqMatch?.[1]
       ? `ultipro:${reqMatch[1]}`
-      : null;
+      : boardId
+        ? `ultipro:board:${boardId}`
+        : null;
 
   return {
     company,
