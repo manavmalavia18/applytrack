@@ -805,6 +805,7 @@
     if (
       parsed?.source === "greenhouse" ||
       parsed?.source === "pinpoint" ||
+      parsed?.source === "rippling" ||
       parsed?.source === "taleo" ||
       parsed?.source === "dayforce" ||
       parsed?.source === "paycom" ||
@@ -822,6 +823,7 @@
       parsed?.source === "oracle" ||
       location.hostname.includes("greenhouse") ||
       location.hostname.includes("pinpointhq") ||
+      location.hostname.includes("rippling") ||
       location.hostname.includes("taleo") ||
       location.hostname.includes("dayforce") ||
       location.hostname.includes("paycom") ||

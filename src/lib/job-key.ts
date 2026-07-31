@@ -42,6 +42,14 @@ export function normalizeJobUrl(raw: string): string {
       if (id) return `pinpoint:${id}`;
     }
 
+    // Rippling ATS — ats.rippling.com/{locale?}/{board}/jobs/{uuid}
+    if (host.includes("rippling.com")) {
+      const id = url.pathname.match(
+        /\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+      )?.[1];
+      if (id) return `rippling:${id}`;
+    }
+
     if (host.includes("linkedin.com")) {
       const jobId =
         url.searchParams.get("currentJobId") ||
@@ -246,6 +254,7 @@ export function detectSource(raw: string): string {
       return "greenhouse";
     }
     if (host.includes("pinpointhq.com")) return "pinpoint";
+    if (host.includes("rippling.com")) return "rippling";
     if (host.includes("lever.co")) return "lever";
     if (host.includes("workday")) return "workday";
     if (host.includes("ashbyhq.com")) return "ashby";

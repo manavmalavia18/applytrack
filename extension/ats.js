@@ -355,6 +355,46 @@ const ApplyTrackATS = {
   },
 
   /**
+   * Rippling ATS — ats.rippling.com/{locale}/{board}/jobs/{uuid}
+   * Prefer visible brand / NEXT_DATA companyName over board slug or host "ats".
+   */
+  rippling: {
+    scrubCompany(t) {
+      let c = (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/\s+logo$/i, "")
+        .replace(/^logo\s+(of\s+)?/i, "")
+        .replace(/\s*[-–—|]\s*(home|careers?|recruiting)\s*$/i, "")
+        .replace(/\s+(careers?|recruiting)\s*$/i, "")
+        .trim();
+      // og:site_name / product chrome
+      if (/^rippling(\s+recruiting)?$/i.test(c)) return "";
+      return c;
+    },
+    isWeakRole(t) {
+      const s = (t || "").trim();
+      if (
+        /^(apply now|apply|department|engineering|location|employment type|compensation|cookie|accept all|careers?|jobs?|home|sign in|submit application)$/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      // Bare department labels mistaken for titles
+      if (/^(engineering|foundational|product|design|sales|marketing|operations|finance|people|hr|legal|support)$/i.test(s)) {
+        return true;
+      }
+      return false;
+    },
+    isWeakCompany(t) {
+      const s = (t || "").trim();
+      // Never host / product chrome — board slugs (joinroot) are last-resort only in the parser
+      return /^(rippling(\s+recruiting)?|ats|www|careers?|jobs?)$/i.test(s);
+    },
+  },
+
+  /**
    * Greenhouse embeds on custom career sites often paint "Loading job details"
    * in the parent frame while the real title lives in a cross-origin iframe.
    */
@@ -377,7 +417,7 @@ function isWeakRoleBase(role) {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
   if (
-    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|pinpoint|pinpointhq|selector software|career center|recruitment)$/i.test(
+    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|pinpoint|pinpointhq|rippling|selector software|career center|recruitment)$/i.test(
       t,
     )
   ) {
@@ -393,7 +433,7 @@ function isWeakRoleBase(role) {
 function isWeakCompanyBase(company) {
   const t = (company || "").trim();
   if (!t || t.length < 2) return true;
-  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career|pinpoint|pinpointhq)\b/i.test(
+  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career|pinpoint|pinpointhq|rippling|ats)\b/i.test(
     t,
   );
 }

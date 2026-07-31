@@ -58,6 +58,7 @@ function isNoisePage() {
     host.includes("teamtailor.com") ||
     host.includes("smartrecruiters.com") ||
     host.includes("pinpointhq.com") ||
+    host.includes("rippling.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -113,6 +114,8 @@ function isSupportedJobPage() {
   if (isTeamtailorPage()) return true;
   // Pinpoint HQ
   if (isPinpointPage()) return true;
+  // Rippling ATS job boards
+  if (isRipplingPage()) return true;
   // SmartRecruiters
   if (host.includes("smartrecruiters.com")) return true;
   // JazzHR
@@ -203,7 +206,7 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor|smartrecruiters|pinpointhq|\/postings\//i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor|smartrecruiters|pinpointhq|rippling\.com|\/postings\//i.test(
     location.href,
   );
 }
@@ -222,6 +225,18 @@ function isPinpointPage() {
   } catch {
     /* ignore */
   }
+  return false;
+}
+
+function isRipplingPage() {
+  const host = location.hostname.replace(/^www\./, "");
+  if (!host.includes("rippling.com")) return false;
+  // ats.rippling.com/{locale?}/{board}/jobs/{uuid}
+  if (/\/jobs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(location.pathname)) {
+    return true;
+  }
+  // Board listing / apply shells under ATS host
+  if (/^ats(\.|$)/i.test(host) && /\/jobs(?:\/|$)/i.test(location.pathname)) return true;
   return false;
 }
 
@@ -337,6 +352,202 @@ function parsePinpoint() {
     url: location.href.split("?")[0].split("#")[0],
     jobKey: uuid ? `pinpoint:${uuid}` : null,
     source: "pinpoint",
+  };
+}
+
+function parseRippling() {
+  // https://ats.rippling.com/en-GB/joinroot/jobs/{uuid}
+  // https://ats.rippling.com/joinroot/jobs/{uuid}
+  const path = location.pathname;
+  const uuid =
+    path.match(
+      /\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    )?.[1] || "";
+
+  const parts = path.split("/").filter(Boolean);
+  const localeRe = /^[a-z]{2}(?:-[A-Z]{2})?$/;
+  const reserved = /^(jobs|apply|application|careers?|home|ats|rippling)$/i;
+  let boardSlug = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (/^jobs$/i.test(parts[i])) {
+      const prev = parts[i - 1] || "";
+      if (prev && !localeRe.test(prev) && !reserved.test(prev) && !/^[0-9a-f-]{8,}$/i.test(prev)) {
+        boardSlug = prev;
+      } else if (i >= 2 && localeRe.test(prev)) {
+        const maybe = parts[i - 2] || "";
+        if (maybe && !reserved.test(maybe)) boardSlug = maybe;
+      }
+      break;
+    }
+  }
+
+  const bad =
+    /^(apply now|apply|department|engineering|location|employment type|compensation|cookie|accept all|careers?|jobs?|home|sign in|submit application|rippling|ats)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || t.length > 180) continue;
+      if (bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t, "rippling")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  function sameAs(a, b) {
+    return (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+  }
+
+  function titleCaseSlug(slug) {
+    return (slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  function badCompany(c, roleName) {
+    const t = (c || "").trim();
+    if (!t) return true;
+    if (typeof isWeakCompany === "function" && isWeakCompany(t, "rippling")) return true;
+    if (/^(ats|rippling|www)$/i.test(t)) return true;
+    if (roleName && sameAs(t, roleName)) return true;
+    return false;
+  }
+
+  let role = "";
+  let company = "";
+
+  // __NEXT_DATA__ is authoritative on Rippling SSR boards
+  try {
+    const nextEl = document.getElementById("__NEXT_DATA__");
+    const raw = (nextEl?.textContent || "").trim();
+    if (raw) {
+      const data = JSON.parse(raw);
+      const api = data?.props?.pageProps?.apiData;
+      const jobPost = api?.jobPost;
+      const jobBoard = api?.jobBoard;
+      if (jobPost?.name) role = pick(jobPost.name) || role;
+      const co =
+        jobPost?.companyName ||
+        jobBoard?.companyName ||
+        jobBoard?.title ||
+        jobPost?.board?.companyName ||
+        jobPost?.board?.title ||
+        "";
+      if (co && !badCompany(co, role)) company = co;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // JobPosting JSON-LD when present
+  if (!role || !company) {
+    try {
+      for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+        const raw = (el.textContent || "").trim();
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        const nodes = Array.isArray(data) ? data : [data];
+        for (const node of nodes) {
+          if (!node || typeof node !== "object") continue;
+          if (!/jobposting/i.test(String(node["@type"] || ""))) continue;
+          if (node.title) role = pick(node.title) || role;
+          const org = node.hiringOrganization;
+          const orgName = typeof org === "string" ? org : org?.name;
+          if (orgName && !badCompany(orgName, role)) company = orgName;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const ogTitle =
+    document.querySelector('meta[property="og:title"]')?.getAttribute("content") || "";
+  const ogBits = ogTitle
+    .split(/\s*[|–—]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  role = pick(
+    role,
+    textOf(document.querySelector("h1")),
+    textOf(document.querySelector("[data-testid='job-title'], [class*='job-title'], [class*='JobTitle']")),
+    ogBits[0],
+    document.title.split(/\s*[|–—]\s*/)[0],
+  );
+
+  // Prefer brand signals — never hostname "ats" / og:site_name "Rippling Recruiting"
+  if (badCompany(company, role)) {
+    const logo = textOf(
+      document.querySelector(
+        "header img[alt], [data-testid='breadcrumb'] img[alt], a[href*='/jobs'] img[alt], img[alt]",
+      ),
+    );
+    if (
+      logo &&
+      logo.length > 1 &&
+      logo.length < 80 &&
+      !/^logo$/i.test(logo) &&
+      !/\.(jpe?g|png|gif|webp|svg)$/i.test(logo) &&
+      !/rippling|image|icon/i.test(logo) &&
+      !badCompany(logo, role)
+    ) {
+      company = logo;
+    }
+  }
+
+  if (badCompany(company, role)) {
+    // Breadcrumb / brand text near the top (often the company name)
+    const crumb = textOf(document.querySelector("[data-testid='breadcrumb']"));
+    const crumbBits = (crumb || "")
+      .split(/\s*[>|/›»]\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const bit of crumbBits) {
+      if (bit.length < 2 || bit.length > 60) continue;
+      if (sameAs(bit, role) || bad.test(bit)) continue;
+      if (!badCompany(bit, role)) {
+        company = bit;
+        break;
+      }
+    }
+  }
+
+  // og:title "Role | Company"
+  if (badCompany(company, role) && ogBits.length >= 2) {
+    const fromOg = ogBits[ogBits.length - 1];
+    if (!badCompany(fromOg, role)) company = fromOg;
+  }
+
+  // Board slug is a weak last resort (joinroot → Joinroot) — prefer brand above
+  const fromSlug = titleCaseSlug(boardSlug);
+  if (badCompany(company, role) && fromSlug && !badCompany(fromSlug, role)) {
+    company = fromSlug;
+  }
+
+  if (typeof scrubCompany === "function") {
+    company = scrubCompany(company, "rippling") || company;
+  }
+  if (typeof scrubRole === "function") {
+    role = scrubRole(role, "rippling") || role;
+  }
+  if (badCompany(company, role)) company = "";
+
+  const listingUrl = location.href
+    .split("?")[0]
+    .split("#")[0]
+    .replace(/\/apply\/?$/i, "")
+    .replace(/\/application\/?$/i, "")
+    .replace(/\/+$/, "");
+
+  return {
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: listingUrl || location.href.split("?")[0],
+    jobKey: uuid ? `rippling:${uuid}` : null,
+    source: "rippling",
   };
 }
 
@@ -2816,6 +3027,7 @@ function parseJobPage() {
   let parsed;
   if (host.includes("linkedin.com")) parsed = parseLinkedIn();
   else if (isPinpointPage()) parsed = parsePinpoint();
+  else if (isRipplingPage()) parsed = parseRippling();
   else if (
     host.includes("greenhouse") ||
     params.get("gh_jid") ||
