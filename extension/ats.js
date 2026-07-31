@@ -326,6 +326,44 @@ const ApplyTrackATS = {
     },
   },
 
+  /**
+   * Pinpoint HQ — {org}.pinpointhq.com/en/postings/{uuid}
+   * Prefer brand logo / JSON-LD over subdomain slug.
+   */
+  pinpoint: {
+    scrubCompany(t) {
+      let c = (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/\s*[-–—|]\s*(home|logo|careers?)\s*$/i, "")
+        .replace(/\s+careers?\s*$/i, "")
+        .trim();
+      const compact = c.replace(/\s/g, "");
+      if (/^desmosstudio(pbc)?$/i.test(compact) || /^desmos\s*studio(\s*pbc)?$/i.test(c)) {
+        return "Desmos Studio PBC";
+      }
+      return c;
+    },
+    isWeakRole(t) {
+      return /^(apply now|department|employment type|location|workplace type|compensation|cookie|accept all|view all opportunities|register your interest|not quite right)$/i.test(
+        t,
+      );
+    },
+    isWeakCompany(t) {
+      return /^pinpoint(hq)?$/i.test(t) || /^careers?$/i.test(t);
+    },
+  },
+
+  /**
+   * Greenhouse embeds on custom career sites often paint "Loading job details"
+   * in the parent frame while the real title lives in a cross-origin iframe.
+   */
+  greenhouse: {
+    isWeakRole(t) {
+      return /^loading(\s+job\s+details?)?\b/i.test(t) || /^job details$/i.test(t);
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 
@@ -339,13 +377,14 @@ function isWeakRoleBase(role) {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
   if (
-    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|selector software|career center|recruitment)$/i.test(
+    /^(bamboohr|greenhouse|lever|ashby|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|phenom|workable|salesforce|simplify|applytrack|pinpoint|pinpointhq|selector software|career center|recruitment)$/i.test(
       t,
     )
   ) {
     return true;
   }
-  if (/^loading\.{0,3}$/i.test(t) || /^please wait\b/i.test(t)) return true;
+  // Custom Greenhouse parents often show "Loading job details" before the embed paints
+  if (/^loading\b/i.test(t) || /^please wait\b/i.test(t)) return true;
   return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center|manual application|manual apply|start (your )?application|submit application)\b/i.test(
     t,
   );
@@ -354,7 +393,7 @@ function isWeakRoleBase(role) {
 function isWeakCompanyBase(company) {
   const t = (company || "").trim();
   if (!t || t.length < 2) return true;
-  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career)\b/i.test(
+  return /^(unknown|greenhouse|ashby|lever|workday|icims|oracle|successfactors|paylocity|ultipro|ukg|web|career|pinpoint|pinpointhq)\b/i.test(
     t,
   );
 }

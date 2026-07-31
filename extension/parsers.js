@@ -57,6 +57,7 @@ function isNoisePage() {
     host.includes("paycomonline.net") ||
     host.includes("teamtailor.com") ||
     host.includes("smartrecruiters.com") ||
+    host.includes("pinpointhq.com") ||
     (host.includes("linkedin.com") && path.includes("/jobs"))
   ) {
     // Still skip if the ATS shell loaded an error document
@@ -110,6 +111,8 @@ function isSupportedJobPage() {
   }
   // Teamtailor (custom career domains + *.teamtailor.com)
   if (isTeamtailorPage()) return true;
+  // Pinpoint HQ
+  if (isPinpointPage()) return true;
   // SmartRecruiters
   if (host.includes("smartrecruiters.com")) return true;
   // JazzHR
@@ -171,6 +174,7 @@ function isSupportedJobPage() {
 
   // Embedded Greenhouse on company career sites
   if (params.get("gh_jid")) return true;
+  if (params.get("jobid") && /career|job-listing|\/jobs?\b/i.test(location.href)) return true;
   if (location.hash.includes("grnhse_app")) return true;
   if (document.getElementById("grnhse_app")) return true;
 
@@ -199,9 +203,141 @@ function mightBecomeJobPage() {
   ) {
     return true;
   }
-  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor|smartrecruiters/i.test(
+  return /careers|\/jobs\/|\/job\/|\/apply\/|\/view\/|portalcareer|gh_jid|greenhouse|ashbyhq|lever\.co|myworkdayjobs|grnhse|icims|entertimeonline|ShowJob|applytojob|successfactors|paylocity|ultipro|OpportunityDetail|opportunityId|phenom|salesforce-sites|Applicant_Insert|jobID=|bamboohr|workable|workforcenow\.adp|adp\.com|taleo\.net|careersection|reqNo=|dayforcehcm|dayforce\.com|paycomonline|teamtailor|smartrecruiters|pinpointhq|\/postings\//i.test(
     location.href,
   );
+}
+
+function isPinpointPage() {
+  const host = location.hostname.replace(/^www\./, "");
+  if (host.includes("pinpointhq.com")) return true;
+  try {
+    if (
+      document.querySelector(
+        'a[href*="pinpointhq"], link[href*="pinpointhq"], script[src*="pinpointhq"], meta[content*="pinpointhq"]',
+      )
+    ) {
+      return /\/postings\//i.test(location.pathname);
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function parsePinpoint() {
+  // https://desmos.pinpointhq.com/en/postings/{uuid}
+  // https://desmos.pinpointhq.com/en/postings/{uuid}/applications/new
+  const path = location.pathname;
+  const uuid =
+    path.match(
+      /\/postings\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    )?.[1] || "";
+
+  const bad =
+    /^(apply now|department|employment type|location|workplace type|compensation|cookie|accept all|view all opportunities|register your interest|not quite right|careers?|jobs?|home)$/i;
+
+  function pick(...cands) {
+    for (const raw of cands) {
+      const t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || t.length > 180) continue;
+      if (bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t, "pinpoint")) continue;
+      return t;
+    }
+    return "";
+  }
+
+  let role = "";
+  let company = "";
+
+  // JobPosting JSON-LD is authoritative when present
+  try {
+    for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+      const raw = (el.textContent || "").trim();
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      const nodes = Array.isArray(data) ? data : [data];
+      for (const node of nodes) {
+        if (!node || typeof node !== "object") continue;
+        const type = String(node["@type"] || "");
+        if (!/jobposting/i.test(type)) continue;
+        if (node.title) role = pick(node.title) || role;
+        const org = node.hiringOrganization;
+        const orgName = typeof org === "string" ? org : org?.name;
+        if (orgName && !(typeof isWeakCompany === "function" && isWeakCompany(orgName, "pinpoint"))) {
+          company = orgName;
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  role = pick(
+    role,
+    textOf(document.querySelector("h1.external-panel__title, h1")),
+    textOf(document.querySelector("[class*='job-title'], [class*='JobTitle'], .posting-headline")),
+    document.querySelector('meta[property="og:title"]')?.getAttribute("content"),
+    document.title.split("|")[0]?.split(" - ")[0],
+  );
+
+  if (!company) {
+    const logo = textOf(
+      document.querySelector(
+        "header img[alt], .external-header img[alt], a[href='/'] img[alt], img[alt*='Home' i], img[alt]",
+      ),
+    );
+    if (
+      logo &&
+      logo.length < 80 &&
+      !/logo|pinpoint|image/i.test(logo) &&
+      !(typeof isWeakCompany === "function" && isWeakCompany(logo, "pinpoint"))
+    ) {
+      company = logo;
+    }
+  }
+
+  if (!company) {
+    const ogDesc =
+      document.querySelector('meta[property="og:description"]')?.getAttribute("content") || "";
+    const fromOg = ogDesc.match(/\bat\s+(.+?)\s+in\s+/i)?.[1]?.trim();
+    if (fromOg && !(typeof isWeakCompany === "function" && isWeakCompany(fromOg, "pinpoint"))) {
+      company = fromOg;
+    }
+  }
+
+  if (!company) {
+    // "Software Engineer - Remote (USA) | Desmos Studio PBC Careers"
+    const fromTitle = document.title.match(/\|\s*(.+?)\s+Careers?\s*$/i)?.[1]?.trim();
+    if (fromTitle && !(typeof isWeakCompany === "function" && isWeakCompany(fromTitle, "pinpoint"))) {
+      company = fromTitle;
+    }
+  }
+
+  // Subdomain is a weak last resort (desmos → Desmos)
+  if (!company || (typeof isWeakCompany === "function" && isWeakCompany(company, "pinpoint"))) {
+    const host = location.hostname.replace(/^www\./, "");
+    const sub = host.replace(/\.pinpointhq\.com$/i, "").split(".")[0];
+    if (sub && !/^(app|www|jobs|careers)$/i.test(sub)) {
+      company = sub.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+  }
+
+  if (typeof scrubCompany === "function") {
+    company = scrubCompany(company, "pinpoint") || company;
+  }
+  if (typeof scrubRole === "function") {
+    role = scrubRole(role, "pinpoint") || role;
+  }
+
+  return {
+    company: company || "Unknown",
+    role: role || "Unknown role",
+    url: location.href.split("?")[0].split("#")[0],
+    jobKey: uuid ? `pinpoint:${uuid}` : null,
+    source: "pinpoint",
+  };
 }
 
 function parseSmartRecruiters() {
@@ -676,15 +812,110 @@ function parseLinkedIn() {
   };
 }
 
-function parseGreenhouse() {
+function findGreenhouseBoardToken() {
+  try {
+    for (const el of document.querySelectorAll('script[src*="greenhouse"]')) {
+      const m = (el.getAttribute("src") || "").match(/[?&]for=([^&#]+)/i);
+      if (m?.[1]) return decodeURIComponent(m[1]);
+    }
+    for (const el of document.querySelectorAll('iframe[src*="greenhouse"]')) {
+      const src = el.getAttribute("src") || "";
+      let m = src.match(/[?&]for=([^&#]+)/i);
+      if (m?.[1]) return decodeURIComponent(m[1]);
+      m = src.match(/(?:boards|job-boards)\.greenhouse\.io\/([^/?#]+)/i);
+      if (m?.[1] && !/^(embed|jobs|tokens|api)$/i.test(m[1])) return decodeURIComponent(m[1]);
+    }
+    const html = (document.documentElement?.innerHTML || "").slice(0, 100000);
+    let m = html.match(/greenhouse\.io\/embed\/job_board\/js\?for=([A-Za-z0-9_-]+)/i);
+    if (m?.[1]) return m[1];
+    m = html.match(/greenhouse\.io\/embed\/job_app\?for=([A-Za-z0-9_-]+)/i);
+    if (m?.[1]) return m[1];
+    m = html.match(/["']board[_-]?token["']\s*[:=]\s*["']([A-Za-z0-9_-]+)["']/i);
+    if (m?.[1]) return m[1];
+    m = html.match(/\bfor\s*[:=]\s*["']([A-Za-z0-9_-]+)["']/i);
+    if (m?.[1] && !/^(true|false|job|jobs)$/i.test(m[1])) {
+      // Only accept when greenhouse context is nearby
+      if (/greenhouse|grnhse/i.test(html.slice(Math.max(0, m.index - 80), m.index + 80))) {
+        return m[1];
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  // boards.greenhouse.io/{token}/jobs/{id}
+  const host = location.hostname.replace(/^www\./, "");
+  if (host.includes("greenhouse.io")) {
+    const board = location.pathname.split("/").filter(Boolean)[0] || "";
+    if (board && !/^(jobs|embeds|embed|api)$/i.test(board)) return board;
+  }
+  return "";
+}
+
+/** Fill weak Greenhouse parent-frame parses from the public boards API. */
+async function enrichGreenhouseFromApi(parsed) {
+  if (!parsed || parsed.source !== "greenhouse") return parsed;
+  const params = new URLSearchParams(location.search);
   const jid =
-    new URLSearchParams(location.search).get("gh_jid") ||
+    (parsed.jobKey || "").replace(/^greenhouse:/i, "") ||
+    params.get("gh_jid") ||
+    params.get("jobid") ||
+    "";
+  if (!jid) return parsed;
+  const roleWeak =
+    !parsed.role ||
+    (typeof isWeakRole === "function" && isWeakRole(parsed.role, "greenhouse"));
+  const coWeak =
+    !parsed.company ||
+    (typeof isWeakCompany === "function" && isWeakCompany(parsed.company, "greenhouse"));
+  if (!roleWeak && !coWeak) return parsed;
+
+  const host = location.hostname.replace(/^www\./, "");
+  const hostGuess =
+    !host.includes("greenhouse") && host.split(".")[0] && !/^(www|careers|jobs|job)$/i.test(host.split(".")[0])
+      ? host.split(".")[0]
+      : "";
+  const tokens = [...new Set([findGreenhouseBoardToken(), hostGuess].filter(Boolean))];
+  if (!tokens.length) return parsed;
+
+  for (const token of tokens) {
+    try {
+      const res = await fetch(
+        `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs/${encodeURIComponent(jid)}`,
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const apiRole = (data.title || "").trim();
+      const apiCompany = (
+        data.company_name ||
+        data.offices?.[0]?.name ||
+        ""
+      ).trim();
+      if (!apiRole && !apiCompany) continue;
+      return {
+        ...parsed,
+        role: roleWeak && apiRole ? apiRole : parsed.role,
+        company: coWeak && apiCompany ? apiCompany : parsed.company,
+        jobKey: parsed.jobKey || `greenhouse:${jid}`,
+        source: "greenhouse",
+      };
+    } catch {
+      /* try next token */
+    }
+  }
+  return parsed;
+}
+
+function parseGreenhouse() {
+  const params = new URLSearchParams(location.search);
+  const jid =
+    params.get("gh_jid") ||
+    params.get("jobid") ||
     location.pathname.match(/\/jobs\/(\d+)/)?.[1] ||
     location.pathname.match(/\/(\d{6,})\/?$/)?.[1] ||
     "";
 
   const badTitle =
-    /^(job details|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application)\b/i;
+    /^(job details|loading(\s+job\s+details?)?.*|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application)\b/i;
 
   function pickRole(...candidates) {
     for (const raw of candidates) {
@@ -692,6 +923,7 @@ function parseGreenhouse() {
       if (!t || t.length < 4 || t.length > 180) continue;
       if (badTitle.test(t)) continue;
       if (/thank you|thanks for applying/i.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t, "greenhouse")) continue;
       return t;
     }
     return "";
@@ -706,6 +938,7 @@ function parseGreenhouse() {
   const role = pickRole(
     textOf(document.querySelector("h1.app-title, .app-title")),
     textOf(document.querySelector("[data-testid='job-title'], .job-title, .posting-headline h2")),
+    document.querySelector('meta[property="og:title"]')?.getAttribute("content"),
     ...[...document.querySelectorAll("h1, h2")].map((n) => textOf(n)),
     ...docTitle,
   );
@@ -714,8 +947,11 @@ function parseGreenhouse() {
     textOf(document.querySelector(".company-name")) ||
     textOf(document.querySelector('[class*="company"]')) ||
     "";
+  if (company && (badTitle.test(company) || /loading/i.test(company))) company = "";
+
   // job-boards.greenhouse.io/{board}/jobs/{id}
-  const board = location.pathname.split("/").filter(Boolean)[0] || "";
+  const board =
+    findGreenhouseBoardToken() || location.pathname.split("/").filter(Boolean)[0] || "";
   if (
     (!company || /greenhouse|job.?board/i.test(company)) &&
     board &&
@@ -726,8 +962,11 @@ function parseGreenhouse() {
   if (!company) {
     const host = location.hostname.replace(/^www\./, "");
     if (!host.includes("greenhouse")) {
-      company = host.split(".")[0].replace(/-/g, " ");
-      company = company.charAt(0).toUpperCase() + company.slice(1);
+      // Custom career host — brand from subdomain / root label
+      const label = host.split(".")[0].replace(/-/g, " ");
+      if (label && !/^(www|careers|jobs|job)$/i.test(label)) {
+        company = label.charAt(0).toUpperCase() + label.slice(1);
+      }
     } else {
       company =
         document.title.split(" at ").pop()?.replace(/\s*\|.*/, "").trim() || host;
@@ -736,6 +975,7 @@ function parseGreenhouse() {
   if (/flock\s*homes/i.test(company) || /^flockhomes$/i.test(company.replace(/\s/g, ""))) {
     company = "Flock Homes";
   }
+  if (/^laika$/i.test(company)) company = "LAIKA";
 
   return {
     company,
@@ -2572,11 +2812,14 @@ function parseOracleCloud() {
 
 function parseJobPage() {
   const host = location.hostname;
+  const params = new URLSearchParams(location.search);
   let parsed;
   if (host.includes("linkedin.com")) parsed = parseLinkedIn();
+  else if (isPinpointPage()) parsed = parsePinpoint();
   else if (
     host.includes("greenhouse") ||
-    new URLSearchParams(location.search).get("gh_jid") ||
+    params.get("gh_jid") ||
+    (params.get("jobid") && /career|job-listing|\/jobs?\b/i.test(location.href)) ||
     location.hash.includes("grnhse") ||
     document.getElementById("grnhse_app")
   ) {

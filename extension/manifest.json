@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.5.63",
-  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, Dayforce, Paycom, Teamtailor, SmartRecruiters, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
+  "version": "0.5.64",
+  "description": "Job tracker + AI drafts (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, Dayforce, Paycom, Teamtailor, SmartRecruiters, Pinpoint, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://*/*",
@@ -42,6 +42,7 @@
         "https://*.teamtailor.com/*",
         "https://*.smartrecruiters.com/*",
         "https://jobs.smartrecruiters.com/*",
+        "https://*.pinpointhq.com/*",
         "https://*.ultipro.com/*",
         "https://*.ukg.com/*",
         "https://*.phenom.com/*",

@@ -368,11 +368,40 @@
       else tab.textContent = "ApplyTrack";
     }
 
+    function displayIdentity() {
+      const src = parsed?.source;
+      let role = parsed?.role || "Job posting";
+      let company = parsed?.company || "Unknown company";
+      const roleWeak =
+        typeof isWeakRole === "function"
+          ? isWeakRole(role, src)
+          : !role || role === "Job posting" || role === "Unknown role";
+      const companyWeak =
+        typeof isWeakCompany === "function"
+          ? isWeakCompany(company, src)
+          : !company || company === "Unknown company" || company === "Unknown";
+      // Applied / tracked: prefer solid DB fields over loading chrome still on the page
+      if (found && application) {
+        const appRole = (application.role || "").trim();
+        const appCo = (application.company || "").trim();
+        const appRoleOk =
+          appRole &&
+          (typeof isWeakRole === "function" ? !isWeakRole(appRole, src) : true) &&
+          appRole !== "Unknown role";
+        const appCoOk =
+          appCo &&
+          (typeof isWeakCompany === "function" ? !isWeakCompany(appCo, src) : true) &&
+          appCo !== "Unknown";
+        if (roleWeak && appRoleOk) role = appRole;
+        if (companyWeak && appCoOk) company = appCo;
+      }
+      return { role, company, roleWeak: roleWeak && !(found && application?.role) };
+    }
+
     function render() {
       paintTab();
       if (!open) return;
-      const role = parsed?.role || "Job posting";
-      const company = parsed?.company || "Unknown company";
+      const { role, company } = displayIdentity();
       let statusClass = "";
       let statusText = "Not tracked yet";
       if (dead || error === "reload_required") {
@@ -574,10 +603,17 @@
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    async function refreshParsed() {
+      let next = typeof parseJobPage === "function" ? parseJobPage() : parsed;
+      if (typeof enrichGreenhouseFromApi === "function" && next?.source === "greenhouse") {
+        next = await enrichGreenhouseFromApi(next);
+      }
+      if (typeof resolveJobPayload === "function") next = resolveJobPayload(next);
+      return next;
+    }
+
     async function refresh(forceRender) {
-      parsed = typeof resolveJobPayload === "function"
-        ? resolveJobPayload(parseJobPage())
-        : parseJobPage();
+      parsed = await refreshParsed();
       error = null;
       const res = await send("LOOKUP", { ...parsed, url: location.href });
       if (!res?.ok) {
@@ -588,6 +624,34 @@
         found = Boolean(res.found);
         stale = Boolean(res.stale);
         application = res.application || null;
+        // Backfill weak page/lock from a solid saved application (or vice versa)
+        if (found && application) {
+          const src = parsed?.source || application.source;
+          const roleWeak =
+            !parsed?.role ||
+            (typeof isWeakRole === "function" && isWeakRole(parsed.role, src));
+          const coWeak =
+            !parsed?.company ||
+            (typeof isWeakCompany === "function" && isWeakCompany(parsed.company, src));
+          const appRoleOk =
+            application.role &&
+            !(typeof isWeakRole === "function" && isWeakRole(application.role, src));
+          const appCoOk =
+            application.company &&
+            !(typeof isWeakCompany === "function" && isWeakCompany(application.company, src));
+          if ((roleWeak && appRoleOk) || (coWeak && appCoOk)) {
+            parsed = {
+              ...parsed,
+              role: roleWeak && appRoleOk ? application.role : parsed.role,
+              company: coWeak && appCoOk ? application.company : parsed.company,
+              jobKey: parsed?.jobKey || application.jobKey,
+              source: parsed?.source || application.source,
+            };
+            if (typeof resolveJobPayload === "function") {
+              parsed = resolveJobPayload(parsed);
+            }
+          }
+        }
         if (found && !stale && parsed?.jobKey) {
           try {
             sessionStorage.setItem(`applytrack:autolog:${parsed.jobKey}`, "1");
@@ -740,6 +804,7 @@
     // SPA boards often hydrate the title after first paint
     if (
       parsed?.source === "greenhouse" ||
+      parsed?.source === "pinpoint" ||
       parsed?.source === "taleo" ||
       parsed?.source === "dayforce" ||
       parsed?.source === "paycom" ||
@@ -756,6 +821,7 @@
       parsed?.source === "adp" ||
       parsed?.source === "oracle" ||
       location.hostname.includes("greenhouse") ||
+      location.hostname.includes("pinpointhq") ||
       location.hostname.includes("taleo") ||
       location.hostname.includes("dayforce") ||
       location.hostname.includes("paycom") ||
@@ -770,20 +836,21 @@
       location.hostname.includes("bamboohr") ||
       location.hostname.includes("workable") ||
       location.hostname.includes("adp.com") ||
-      location.hostname.includes("oraclecloud.com")
+      location.hostname.includes("oraclecloud.com") ||
+      new URLSearchParams(location.search).get("gh_jid")
     ) {
       setTimeout(() => {
-        if (!dead) {
-          parsed = parseJobPage();
-          void refresh(false);
-        }
+        if (!dead) void refresh(false);
       }, 1500);
       setTimeout(() => {
-        if (!dead) {
-          parsed = parseJobPage();
-          void refresh(false);
-        }
+        if (!dead) void refresh(false);
       }, 3500);
+      // Custom-domain Greenhouse embeds can take longer than 3.5s
+      if (parsed?.source === "greenhouse" || new URLSearchParams(location.search).get("gh_jid")) {
+        setTimeout(() => {
+          if (!dead) void refresh(false);
+        }, 6000);
+      }
     }
 
     let last = location.href;

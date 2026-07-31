@@ -24,6 +24,23 @@ export function normalizeJobUrl(raw: string): string {
     // Greenhouse embed on any host (esri.com?gh_jid=...)
     const ghJid = url.searchParams.get("gh_jid");
     if (ghJid) return `greenhouse:${ghJid}`;
+    // Custom career shells (e.g. laika.com/careers/job-listing?jobid=…)
+    const jobid = url.searchParams.get("jobid");
+    if (
+      jobid &&
+      /^\d{6,}$/.test(jobid) &&
+      (/job-listing|grnhse|greenhouse/i.test(raw) || /\/careers?\//i.test(url.pathname))
+    ) {
+      return `greenhouse:${jobid}`;
+    }
+
+    // Pinpoint HQ — {org}.pinpointhq.com/{lang}/postings/{uuid}
+    if (host.includes("pinpointhq.com")) {
+      const id = url.pathname.match(
+        /\/postings\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+      )?.[1];
+      if (id) return `pinpoint:${id}`;
+    }
 
     if (host.includes("linkedin.com")) {
       const jobId =
@@ -34,6 +51,7 @@ export function normalizeJobUrl(raw: string): string {
     if (host.includes("greenhouse") || host.includes("job-boards.greenhouse")) {
       const jid =
         url.searchParams.get("gh_jid") ||
+        url.searchParams.get("jobid") ||
         url.pathname.match(/\/jobs\/(\d+)/)?.[1];
       if (jid) return `greenhouse:${jid}`;
     }
@@ -219,9 +237,15 @@ export function detectSource(raw: string): string {
   try {
     const host = new URL(raw).hostname.replace(/^www\./, "");
     if (host.includes("linkedin.com")) return "linkedin";
-    if (host.includes("greenhouse") || new URL(raw).searchParams.get("gh_jid")) {
+    if (
+      host.includes("greenhouse") ||
+      new URL(raw).searchParams.get("gh_jid") ||
+      (/^\d{5,}$/.test(new URL(raw).searchParams.get("jobid") || "") &&
+        /career|job-listing|\/jobs?\b/i.test(raw))
+    ) {
       return "greenhouse";
     }
+    if (host.includes("pinpointhq.com")) return "pinpoint";
     if (host.includes("lever.co")) return "lever";
     if (host.includes("workday")) return "workday";
     if (host.includes("ashbyhq.com")) return "ashby";
