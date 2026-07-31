@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
       ? String(body.status)
       : "applied";
     const notes = String(body.notes || "");
+    const reqId = typeof body.reqId === "string" ? body.reqId.trim().slice(0, 120) : "";
     const forceManual = Boolean(body.manual) || body.source === "manual";
     let url = String(body.url || "").trim();
     if (!url) {
@@ -130,6 +131,7 @@ export async function POST(req: NextRequest) {
           url,
           status,
           notes: notes || latest.notes,
+          reqId: reqId || latest.reqId,
           source: forceManual ? "manual" : detectSource(url),
           appliedAt: status === "saved" ? latest.appliedAt : latest.appliedAt || now,
           followUpAt: followUpAt ?? latest.followUpAt,
@@ -163,6 +165,7 @@ export async function POST(req: NextRequest) {
             ? `${notes ? `${notes}\n` : ""}Re-opened posting / new apply cycle #${cycle}`.trim()
             : notes,
         source: forceManual ? "manual" : detectSource(url),
+        reqId,
         appliedAt: status === "saved" ? null : now,
         followUpAt,
       })

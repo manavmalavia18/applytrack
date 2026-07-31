@@ -52,6 +52,7 @@ export const applications = pgTable(
     url: text("url").notNull(),
     status: varchar("status", { length: 32 }).notNull().default("applied"),
     source: varchar("source", { length: 64 }).notNull().default("manual"),
+    reqId: varchar("req_id", { length: 120 }).notNull().default(""),
     notes: text("notes").notNull().default(""),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
     followUpAt: timestamp("follow_up_at", { withTimezone: true }),

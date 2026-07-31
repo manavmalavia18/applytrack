@@ -18,6 +18,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     if (body.company != null) patch.company = String(body.company);
     if (body.role != null) patch.role = String(body.role);
     if (body.notes != null) patch.notes = String(body.notes);
+    if (body.url != null) {
+      const url = String(body.url).trim();
+      if (url) patch.url = url;
+    }
+    if (body.reqId != null) patch.reqId = String(body.reqId).trim().slice(0, 120);
     if (body.status != null) {
       if (!isStatus(String(body.status))) {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });
@@ -26,6 +31,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     }
     if (body.followUpAt !== undefined) {
       patch.followUpAt = body.followUpAt ? new Date(body.followUpAt) : null;
+    }
+    if (body.appliedAt !== undefined) {
+      patch.appliedAt = body.appliedAt ? new Date(body.appliedAt) : null;
     }
 
     const db = getDb();

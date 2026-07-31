@@ -2,22 +2,14 @@
 
 import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
-import { PIPELINE_ORDER, STATUS_LABELS } from "@/lib/statuses";
+import { FormEvent, MouseEvent, useMemo, useState } from "react";
+import { ApplicationDetail } from "@/components/ApplicationDetail";
+import { PIPELINE_ORDER, STATUS_LABELS, formatSource } from "@/lib/statuses";
+import { exportApplicationsToExcel } from "@/lib/export";
+import type { AppRow } from "@/lib/types";
 import type { ApplicationStatus } from "@/db/schema";
 
-export type AppRow = {
-  id: string;
-  company: string;
-  role: string;
-  url: string;
-  status: string;
-  source: string;
-  notes: string;
-  appliedAt: string | null;
-  followUpAt: string | null;
-  updatedAt: string;
-};
+export type { AppRow } from "@/lib/types";
 
 export function PipelineBoard({ initial }: { initial: AppRow[] }) {
   const [apps, setApps] = useState(initial);
@@ -25,6 +17,9 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
   const [showAdd, setShowAdd] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [form, setForm] = useState({
     company: "",
     role: "",
@@ -33,30 +28,49 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     notes: "",
   });
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return apps;
+    return apps.filter((a) =>
+      [a.company, a.role, a.notes, formatSource(a.source)].some((v) =>
+        v.toLowerCase().includes(q),
+      ),
+    );
+  }, [apps, search]);
+
   const grouped = useMemo(() => {
     const map = Object.fromEntries(PIPELINE_ORDER.map((s) => [s, [] as AppRow[]])) as Record<
       ApplicationStatus,
       AppRow[]
     >;
-    for (const app of apps) {
+    for (const app of filtered) {
       const status = (app.status in STATUS_LABELS ? app.status : "applied") as ApplicationStatus;
       map[status].push(app);
     }
     return map;
-  }, [apps]);
+  }, [filtered]);
 
-  async function updateStatus(id: string, status: ApplicationStatus) {
+  const selected = useMemo(
+    () => (selectedId ? apps.find((a) => a.id === selectedId) || null : null),
+    [apps, selectedId],
+  );
+
+  async function patchApplication(id: string, patch: Record<string, unknown>) {
     setBusy(id);
     const res = await fetch(`/api/applications/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(patch),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     setBusy(null);
     if (res.ok && data.application) {
       setApps((prev) => prev.map((a) => (a.id === id ? { ...a, ...data.application } : a)));
     }
+  }
+
+  async function updateStatus(id: string, status: ApplicationStatus) {
+    await patchApplication(id, { status });
   }
 
   async function remove(id: string) {
@@ -65,6 +79,7 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     await fetch(`/api/applications/${id}`, { method: "DELETE" });
     setBusy(null);
     setApps((prev) => prev.filter((a) => a.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
   }
 
   async function addApplication(e: FormEvent) {
@@ -107,14 +122,30 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
     setShowAdd(false);
   }
 
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      await exportApplicationsToExcel(filtered, `applytrack-applications-${stamp}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function stop(e: MouseEvent) {
+    e.stopPropagation();
+  }
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-          <p className="text-sm text-zinc-600">{apps.length} applications</p>
+          <p className="text-sm text-zinc-600">
+            {filtered.length} of {apps.length} applications
+          </p>
         </div>
-        <div className="flex gap-2 text-sm">
+        <div className="flex flex-wrap gap-2 text-sm">
           <button
             type="button"
             onClick={() => {
@@ -124,6 +155,14 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
             className="rounded-md bg-teal-800 px-3 py-1.5 text-white hover:bg-teal-900"
           >
             {showAdd ? "Cancel" : "Add application"}
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || apps.length === 0}
+            className="rounded-md border border-teal-700 px-3 py-1.5 text-teal-800 hover:bg-teal-50 disabled:opacity-50"
+          >
+            {exporting ? "Exporting…" : "Export to Excel"}
           </button>
           <Link href="/dashboard/settings" className="rounded-md border px-3 py-1.5 hover:bg-zinc-50">
             Extension token
@@ -138,6 +177,24 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
             </button>
           </form>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search company, role, notes, source…"
+          className="w-full max-w-sm rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm"
+        />
+        {search ? (
+          <button
+            type="button"
+            onClick={() => setSearch("")}
+            className="rounded-md border px-2 py-1.5 text-xs text-zinc-500 hover:bg-zinc-50"
+          >
+            Clear
+          </button>
+        ) : null}
       </div>
 
       {showAdd ? (
@@ -231,18 +288,23 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
             </header>
             <ul className="flex flex-col gap-2">
               {grouped[status].map((app) => (
-                <li key={app.id} className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+                <li
+                  key={app.id}
+                  onClick={() => setSelectedId(app.id)}
+                  className="cursor-pointer rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition hover:border-teal-300 hover:shadow-md"
+                >
                   <a
                     href={app.url}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={stop}
                     className="font-medium text-teal-800 hover:underline"
                   >
                     {app.role}
                   </a>
                   <p className="text-sm text-zinc-700">{app.company}</p>
                   <p className="mt-1 text-xs text-zinc-500">
-                    {app.source}
+                    {formatSource(app.source)}
                     {app.appliedAt
                       ? ` · applied ${formatDistanceToNow(new Date(app.appliedAt), { addSuffix: true })}`
                       : null}
@@ -250,7 +312,7 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
                       ? ` · follow-up ${formatDistanceToNow(new Date(app.followUpAt), { addSuffix: true })}`
                       : null}
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-1">
+                  <div className="mt-2 flex flex-wrap gap-1" onClick={stop}>
                     {PIPELINE_ORDER.filter((s) => s !== status).map((s) => (
                       <button
                         key={s}
@@ -280,6 +342,16 @@ export function PipelineBoard({ initial }: { initial: AppRow[] }) {
           </section>
         ))}
       </div>
+
+      {selected ? (
+        <ApplicationDetail
+          app={selected}
+          busy={busy === selected.id}
+          onClose={() => setSelectedId(null)}
+          onSave={patchApplication}
+          onDelete={remove}
+        />
+      ) : null}
     </div>
   );
 }

@@ -36,9 +36,12 @@ export default async function DashboardPage() {
     url: r.url,
     status: r.status,
     source: r.source,
+    jobKey: r.jobKey,
+    reqId: r.reqId,
     notes: r.notes,
     appliedAt: r.appliedAt ? r.appliedAt.toISOString() : null,
     followUpAt: r.followUpAt ? r.followUpAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }));
 
