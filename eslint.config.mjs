@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Node test tooling for the extension — CommonJS by design (node:test), not
+    // part of the Next.js app this config targets.
+    "extension/tests/**",
+    "extension/fixtures/**",
   ]),
 ]);
 

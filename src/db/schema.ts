@@ -55,6 +55,7 @@ export const applications = pgTable(
     reqId: varchar("req_id", { length: 120 }).notNull().default(""),
     notes: text("notes").notNull().default(""),
     jobDescription: text("job_description"),
+    captureConfidence: text("capture_confidence"),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
     followUpAt: timestamp("follow_up_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

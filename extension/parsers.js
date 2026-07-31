@@ -78,8 +78,14 @@ function jdTextFromElement(el) {
   }
 }
 
-/** JSON-LD JobPosting.description — most reliable source when present (GH, Ashby, Workable…). */
-function jdFromJsonLd() {
+/**
+ * Shared JobPosting JSON-LD reader — title / company / description, first
+ * non-empty value per field across every declared JobPosting node on the page.
+ * Board-API / DOM fallbacks stay per-ATS in each parse* function below; this
+ * only surfaces the raw structured-data values so callers can try it first.
+ */
+function parseJobPostingJsonLd() {
+  const result = { title: "", company: "", description: "" };
   try {
     for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
       const raw = (el.textContent || "").trim();
@@ -98,16 +104,29 @@ function jdFromJsonLd() {
         const type = node["@type"];
         const types = Array.isArray(type) ? type : [type];
         if (!types.some((t) => /jobposting/i.test(String(t || "")))) continue;
-        if (node.description) {
+        if (!result.title && node.title) {
+          result.title = String(node.title).trim();
+        }
+        if (!result.company) {
+          const org = node.hiringOrganization;
+          const name = typeof org === "string" ? org : org?.name;
+          if (name) result.company = String(name).trim();
+        }
+        if (!result.description && node.description) {
           const text = normalizeJdText(jdHtmlToText(String(node.description)));
-          if (isDecentJobDescription(text)) return text;
+          if (isDecentJobDescription(text)) result.description = text;
         }
       }
     }
   } catch {
     /* ignore */
   }
-  return "";
+  return result;
+}
+
+/** JSON-LD JobPosting.description — most reliable source when present (GH, Ashby, Workable…). */
+function jdFromJsonLd() {
+  return parseJobPostingJsonLd().description;
 }
 
 // Priority tiers: ATS-specific containers first, then common patterns, then generic content.
@@ -1043,7 +1062,11 @@ function parseDayforce() {
     return "";
   }
 
+  const ldDayforce =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
+
   const role = pick(
+    ldDayforce.title,
     textOf(document.querySelector("h1")),
     textOf(document.querySelector("[class*='job-title'], [class*='jobTitle'], [data-automation-id*='jobTitle']")),
     textOf(document.querySelector("[class*='JobTitle']")),
@@ -1082,6 +1105,11 @@ function parseDayforce() {
       document.querySelector('meta[property="og:site_name"]')?.getAttribute("content"),
     );
     if (ogSite) company = ogSite;
+  }
+
+  if (!company && ldDayforce.company) {
+    const fromLd = acceptCompany(ldDayforce.company);
+    if (fromLd) company = fromLd;
   }
 
   if (!company) {
@@ -1368,7 +1396,11 @@ function parseGreenhouse() {
     .map((s) => s.trim())
     .filter((s) => s && !badTitle.test(s) && !/thank you|thanks for applying/i.test(s));
 
+  const ldGreenhouse =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
+
   const role = pickRole(
+    ldGreenhouse.title,
     textOf(document.querySelector("h1.app-title, .app-title")),
     textOf(document.querySelector("[data-testid='job-title'], .job-title, .posting-headline h2")),
     document.querySelector('meta[property="og:title"]')?.getAttribute("content"),
@@ -1399,25 +1431,7 @@ function parseGreenhouse() {
   }
 
   if (!company) {
-    try {
-      for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
-        const raw = (el.textContent || "").trim();
-        if (!raw) continue;
-        const data = JSON.parse(raw);
-        const nodes = Array.isArray(data) ? data : [data];
-        for (const node of nodes) {
-          if (!node || typeof node !== "object") continue;
-          if (!/jobposting/i.test(String(node["@type"] || ""))) continue;
-          const org = node.hiringOrganization;
-          const orgName = typeof org === "string" ? org : org?.name;
-          company = acceptCompany(orgName);
-          if (company) break;
-        }
-        if (company) break;
-      }
-    } catch {
-      /* ignore */
-    }
+    company = acceptCompany(ldGreenhouse.company);
   }
 
   if (!company) {
@@ -1528,7 +1542,11 @@ function parseLever() {
     return false;
   }
 
+  const ldLever =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
+
   const role = pick(
+    ldLever.title,
     textOf(document.querySelector(".posting-headline h2")),
     textOf(document.querySelector(".posting-headline h1")),
     textOf(document.querySelector("h2")),
@@ -1561,6 +1579,11 @@ function parseLever() {
     !/image/i.test(logo)
   ) {
     const scrubbed = scrubCompany(logo, "lever");
+    if (!badCompany(scrubbed, role)) company = scrubbed;
+  }
+
+  if (badCompany(company, role) && ldLever.company) {
+    const scrubbed = scrubCompany(ldLever.company, "lever");
     if (!badCompany(scrubbed, role)) company = scrubbed;
   }
 
@@ -1735,12 +1758,19 @@ function parseWorkday() {
 }
 
 function parseAshby() {
+  const ldAshby =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
   let role =
-    textOf(document.querySelector("h1")) || document.title.split("|")[0].trim() || "";
+    ldAshby.title ||
+    textOf(document.querySelector("h1")) ||
+    document.title.split("|")[0].trim() ||
+    "";
   const parts = location.pathname.split("/").filter(Boolean);
   const org = (parts[0] || "").toLowerCase();
   const jobId = parts.find((p, i) => i > 0 && /^[0-9a-f-]{8,}$/i.test(p)) || parts[1] || "";
-  let company = org.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  let company =
+    (ldAshby.company && !isWeakCompany(ldAshby.company, "ashby") && ldAshby.company) ||
+    org.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   // Prefer "@ Company" from the page title, then from an h1 that still has it glued on
   const atMatch =
     document.title.match(/@\s*(.+?)(?:\s*[|\-]|$)/) || role.match(/\s+@\s*(.+)$/);
@@ -2385,7 +2415,11 @@ function parseUltiPro() {
     return "";
   }
 
+  const ldUltiPro =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
+
   const roleRaw = pick(
+    ldUltiPro.title,
     textOf(document.querySelector("h1")),
     textOf(document.querySelector("h2")),
     textOf(document.querySelector("[class*='opportunity'], [class*='job-title'], [class*='JobTitle']")),
@@ -2405,6 +2439,11 @@ function parseUltiPro() {
     company = "PowerSecure";
   } else if (/tos1002tabs|toshiba|tostabs/i.test(tenant)) {
     company = "Toshiba";
+  }
+
+  if (!company && ldUltiPro.company && !looksLikeTenantCode(ldUltiPro.company)) {
+    const fromLd = cleanBrand(ldUltiPro.company);
+    if (fromLd) company = fromLd;
   }
 
   // Logo alt / header brand (img alt — textOf(img) is always empty)
@@ -2884,12 +2923,20 @@ function mergeRememberedJob(parsed, source) {
     const prev = readBestJobCtx(parsed, src);
     if (!prev) return parsed;
     const lockSrc = prev.source || src;
+    // Apply/wizard/thank-you surfaces must never re-derive identity from page chrome —
+    // prefer the session lock outright, even when it's merely "usable" (not yet solid).
+    const wizardPage =
+      typeof isApplicationWizardPage === "function"
+        ? isApplicationWizardPage(location.href, lockSrc || src)
+        : false;
 
-    // Different posting ids — don't mix, unless current title is junk (wizard chrome)
+    // Different posting ids — don't mix, unless current title is junk (wizard chrome),
+    // or we're on an apply/wizard/thank-you page where a solid lock always wins even
+    // if the fresh parse happens to produce text that isn't technically "weak".
     if (parsed.jobKey && prev.jobKey && parsed.jobKey !== prev.jobKey) {
       const currWeak =
         !parsed.role || isWeakRole(parsed.role, src) || isWeakRole(parsed.role, lockSrc);
-      if (!(isSolidLock(prev, lockSrc) && currWeak)) return parsed;
+      if (!(isSolidLock(prev, lockSrc) && (currWeak || wizardPage))) return parsed;
     }
 
     // FROZEN: once solid, ignore page parse for identity fields
@@ -2924,7 +2971,8 @@ function mergeRememberedJob(parsed, source) {
       };
     }
 
-    // Incomplete lock — fill gaps / upgrade weak fields only
+    // Incomplete lock — fill gaps / upgrade weak fields only. A field already
+    // recorded as usable never regresses to a fresh parse, regardless of page type.
     const prevRoleOk = prev.role && !isWeakRole(prev.role, lockSrc);
     const nextRoleOk = parsed.role && !isWeakRole(parsed.role, src);
     const role = prevRoleOk
@@ -2957,6 +3005,26 @@ function mergeRememberedJob(parsed, source) {
   }
 }
 
+/**
+ * Lightweight UI signal only — never blocks Mark Sent / auto-log.
+ *   high:   solid role+company+jobKey, company !== role, not weak, decent JD on file
+ *   medium: role/company are usable but jobKey and/or JD is still missing
+ *   low:    weak/duplicate company or role, or an apply/wizard/thank-you page
+ *           without a solid (or at least usable) lock backing it yet
+ */
+function computeCaptureConfidence(parsed, opts = {}) {
+  if (!parsed) return "low";
+  const source = parsed.source;
+  const role = parsed.role || "";
+  const company = parsed.company || "";
+  const roleOk = Boolean(role) && !isWeakRole(role, source);
+  const companyOk = isUsableCompany(company, role, source);
+  if (!roleOk || !companyOk) return "low";
+  if (opts.wizardPage && !opts.solid) return "low";
+  if (!parsed.jobKey || !isDecentJobDescription(parsed.jobDescription)) return "medium";
+  return "high";
+}
+
 /** Final payload for UI / save — always listing details when cached. */
 function resolveJobPayload(parsed) {
   if (!parsed) return parsed;
@@ -2967,6 +3035,7 @@ function resolveJobPayload(parsed) {
     rememberJob(merged);
   }
   const prev = readBestJobCtx(merged, merged.source);
+  let result;
   if (prev && isSolidLock(prev, prev.source || merged.source)) {
     const lockSrc = prev.source || merged.source;
     const cleanRole = scrubRole(prev.role, lockSrc) || prev.role;
@@ -2983,7 +3052,7 @@ function resolveJobPayload(parsed) {
         /* ignore */
       }
     }
-    return {
+    result = {
       ...merged,
       jobKey: prev.jobKey,
       role: cleanRole,
@@ -2996,8 +3065,25 @@ function resolveJobPayload(parsed) {
         ? prev.jobDescription
         : merged.jobDescription || prev.jobDescription || "",
     };
+  } else {
+    result = typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
   }
-  return typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
+
+  try {
+    const wizardPage =
+      typeof isApplicationWizardPage === "function"
+        ? isApplicationWizardPage(
+            location.href,
+            result.source,
+            `${document.title} ${textOf(document.querySelector("h1"))}`,
+          )
+        : false;
+    const solid = isSolidLock({ ...result, locked: true }, result.source);
+    result.captureConfidence = computeCaptureConfidence(result, { wizardPage, solid });
+  } catch {
+    /* ignore — confidence is a best-effort UI hint */
+  }
+  return result;
 }
 
 /**

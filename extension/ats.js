@@ -522,6 +522,53 @@ function scrubCompany(company, source) {
   return (company || "").trim().replace(/\s+/g, " ");
 }
 
+/**
+ * Apply/wizard/thank-you surfaces — form steps, oneclick banners, and confirmation
+ * pages. Shared by the merge path so a fresh (even non-"weak") parse of page chrome
+ * never displaces an already-usable session lock while the candidate is mid-flow.
+ * @param {string} url
+ * @param {string} [source]
+ * @param {string} [text] optional page text/title for thank-you copy detection
+ */
+const WIZARD_URL_RE =
+  /\/apply\b|\/application\b|\/applications\/new|\/oneclick-ui\/|manualapplication|applicationsubmitted|application-submitted|\/submit(ted)?\b|thank-?you|\/candidateportal\/[^/]*\/apply/i;
+
+const ATS_WIZARD_URL_PATTERNS = {
+  dayforce: /\/apply\b|manualapplication|\/candidateportal\/[^/]*\/apply/i,
+  smartrecruiters: /\/oneclick-ui\/|\/application\b/i,
+  lever: /\/apply\b/i,
+  greenhouse: /\/apply\b|applicationsubmitted|thank-?you/i,
+  ashby: /\/application\b|\/apply\b/i,
+  workday: /\/apply\b|createaccount/i,
+  taleo: /application\.jss|\/apply\b/i,
+  ultipro: /opportunityapply|\/application\b/i,
+  icims: /\/apply\b|jobsummary/i,
+  rippling: /\/apply\b|\/applications?\b/i,
+  pinpoint: /\/applications\/new/i,
+  teamtailor: /\/applications?\b/i,
+  workable: /\/apply\b|\/candidates\b/i,
+  oracle: /\/apply\b|applicantflow/i,
+  paycom: /\/apply\b/i,
+};
+
+const THANK_YOU_TEXT_RE =
+  /thank you for (your application|applying)|thanks for applying|application (submitted|received|complete)|you('ve| have) successfully applied|your application (has been|was) (submitted|received)/i;
+
+function isApplicationWizardPage(url, source, text) {
+  const href = String(url || "");
+  let path = href;
+  try {
+    path = new URL(href, "https://x.invalid").pathname;
+  } catch {
+    /* keep raw href as fallback */
+  }
+  if (WIZARD_URL_RE.test(href) || WIZARD_URL_RE.test(path)) return true;
+  const extra = source && ATS_WIZARD_URL_PATTERNS[source];
+  if (extra && (extra.test(href) || extra.test(path))) return true;
+  if (text && THANK_YOU_TEXT_RE.test(String(text))) return true;
+  return false;
+}
+
 /** Apply source-specific scrubbers to a parsed payload. */
 function normalizeParsed(parsed) {
   if (!parsed?.source) return parsed;

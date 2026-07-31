@@ -203,6 +203,11 @@
         }
         .status.applied { background: #dcfce7; color: #166534; }
         .status.error { background: #fee2e2; color: #991b1b; }
+        .badge {
+          display: inline-flex; border-radius: 999px; padding: 4px 10px; margin: -4px 0 12px 8px;
+          font-size: 11px; font-weight: 700;
+        }
+        .badge.low { background: #fef3c7; color: #92400e; }
         h1 { font-size: 18px; margin: 0 0 6px; line-height: 1.25; }
         .co { font-size: 14px; color: #475569; margin: 0 0 12px; }
         .fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
@@ -430,9 +435,11 @@
         (parsed?.jobKey && String(parsed.jobKey).match(/^(?:workday|taleo|dayforce):(.+)$/i)?.[1]) ||
         "";
       const showReqId = Boolean(reqId) || parsed?.source === "workday";
+      const lowConfidence = canEdit && parsed?.captureConfidence === "low";
 
       let html = `
         <div class="status ${statusClass}">${escapeHtml(statusText)}</div>
+        ${lowConfidence ? `<div class="badge low">Low confidence — edit if wrong</div>` : ""}
         ${
           canEdit
             ? `<div class="fields">

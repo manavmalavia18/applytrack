@@ -60,6 +60,9 @@ export async function POST(req: NextRequest) {
     const notes = String(body.notes || "");
     const reqId = typeof body.reqId === "string" ? body.reqId.trim().slice(0, 120) : "";
     const jobDescription = sanitizeJobDescription(body.jobDescription);
+    const captureConfidence = ["high", "medium", "low"].includes(body.captureConfidence)
+      ? String(body.captureConfidence)
+      : null;
     const forceManual = Boolean(body.manual) || body.source === "manual";
     let url = String(body.url || "").trim();
     if (!url) {
@@ -141,6 +144,7 @@ export async function POST(req: NextRequest) {
           notes: notes || latest.notes,
           reqId: reqId || latest.reqId,
           jobDescription: nextJobDescription,
+          captureConfidence: captureConfidence ?? latest.captureConfidence,
           source: forceManual ? "manual" : detectSource(url),
           appliedAt: status === "saved" ? latest.appliedAt : latest.appliedAt || now,
           followUpAt: followUpAt ?? latest.followUpAt,
@@ -176,6 +180,7 @@ export async function POST(req: NextRequest) {
         source: forceManual ? "manual" : detectSource(url),
         reqId,
         jobDescription,
+        captureConfidence,
         appliedAt: status === "saved" ? null : now,
         followUpAt,
       })
