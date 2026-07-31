@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { applications } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
+import { sanitizeJobDescription } from "@/lib/job-key";
 import { isStatus } from "@/lib/statuses";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -23,6 +24,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       if (url) patch.url = url;
     }
     if (body.reqId != null) patch.reqId = String(body.reqId).trim().slice(0, 120);
+    if (body.jobDescription != null) {
+      patch.jobDescription = sanitizeJobDescription(body.jobDescription);
+    }
     if (body.status != null) {
       if (!isStatus(String(body.status))) {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });

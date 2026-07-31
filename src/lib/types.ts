@@ -8,6 +8,7 @@ export type AppRow = {
   jobKey: string;
   reqId: string;
   notes: string;
+  jobDescription: string | null;
   appliedAt: string | null;
   followUpAt: string | null;
   createdAt: string;

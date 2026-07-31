@@ -9,6 +9,16 @@ function fmtDate(iso: string | null): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Excel caps cell text at 32,767 chars — leave headroom for a truncation note.
+const MAX_XLSX_CELL_CHARS = 32000;
+
+function fmtJobDescription(jd: string | null): string {
+  if (!jd) return "";
+  return jd.length > MAX_XLSX_CELL_CHARS
+    ? `${jd.slice(0, MAX_XLSX_CELL_CHARS)}\n…[truncated for Excel cell limit]`
+    : jd;
+}
+
 /** Build a plain-object row set for the applications sheet (used by xlsx export). */
 export function toExportRows(apps: AppRow[]) {
   return apps.map((app) => {
@@ -27,6 +37,7 @@ export function toExportRows(apps: AppRow[]) {
       "Created At": fmtDate(app.createdAt),
       "Last Updated": fmtDate(app.updatedAt),
       Notes: app.notes,
+      "Job Description": fmtJobDescription(app.jobDescription),
     };
   });
 }
@@ -50,6 +61,7 @@ export async function exportApplicationsToExcel(apps: AppRow[], filename = "appl
     { wch: 12 }, // Created At
     { wch: 12 }, // Last Updated
     { wch: 40 }, // Notes
+    { wch: 60 }, // Job Description
   ];
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, "Applications");

@@ -207,6 +207,24 @@ export function baseJobKey(jobKey: string): string {
   return jobKey.replace(/#\d+$/, "");
 }
 
+/** Hard cap on stored JD size — generous for real postings, guards against runaway scrapes. */
+export const MAX_JOB_DESCRIPTION_LENGTH = 100_000;
+
+/** Trim/cap a job description before it hits the DB; empty/whitespace-only → null. */
+export function sanitizeJobDescription(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/\r\n/g, "\n").trim();
+  if (!cleaned) return null;
+  return cleaned.length > MAX_JOB_DESCRIPTION_LENGTH
+    ? cleaned.slice(0, MAX_JOB_DESCRIPTION_LENGTH)
+    : cleaned;
+}
+
+/** True when a candidate JD is long/real enough to be worth keeping over an existing one. */
+export function isDecentJobDescription(text: string | null | undefined): boolean {
+  return typeof text === "string" && text.trim().length >= 80;
+}
+
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Same posting id reused months later → treat as a new apply cycle. */

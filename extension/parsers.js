@@ -6,6 +6,159 @@ function textOf(el) {
   return ((el && (el.innerText || el.textContent)) || "").trim().replace(/\s+/g, " ");
 }
 
+/** Shared JD extractor — best-effort, works across ATS without per-source hacks. */
+const MAX_JD_CHARS = 20000;
+const JD_MIN_CHARS = 80;
+const JD_COOKIE_BANNER_RE =
+  /^(we use cookies|this (site|website) uses cookies|by clicking accept|by continuing to (use|browse)|manage (your )?cookie preferences|accept all cookies|cookie policy|privacy preference center|your privacy (choices|matters))/i;
+
+function normalizeJdText(text) {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Turn a JSON-LD `description` HTML string into readable plain text. */
+function jdHtmlToText(html) {
+  if (!html || typeof html !== "string") return "";
+  let s = html
+    .replace(/<\s*(br)\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|li|h[1-6]|tr)\s*>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, " ");
+  try {
+    const ta = document.createElement("textarea");
+    ta.innerHTML = s;
+    s = ta.value;
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
+function isDecentJobDescription(text) {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim();
+  if (t.length < JD_MIN_CHARS) return false;
+  if (JD_COOKIE_BANNER_RE.test(t)) return false;
+  return true;
+}
+
+/** Clone + detach-render a node so `.innerText` works without touching the live page. */
+function jdTextFromElement(el) {
+  if (!(el instanceof HTMLElement)) return "";
+  let holder;
+  try {
+    const clone = el.cloneNode(true);
+    clone
+      .querySelectorAll(
+        "script, style, noscript, template, svg, nav, header, footer, form, button, iframe, [class*='cookie' i], [id*='cookie' i], [class*='consent' i], [id*='onetrust' i], [aria-hidden='true']",
+      )
+      .forEach((n) => n.remove());
+    holder = document.createElement("div");
+    Object.assign(holder.style, {
+      position: "fixed",
+      top: "-99999px",
+      left: "-99999px",
+      width: "800px",
+      visibility: "hidden",
+      pointerEvents: "none",
+    });
+    holder.appendChild(clone);
+    (document.body || document.documentElement).appendChild(holder);
+    return normalizeJdText(holder.innerText || holder.textContent || "");
+  } catch {
+    return "";
+  } finally {
+    holder?.remove();
+  }
+}
+
+/** JSON-LD JobPosting.description — most reliable source when present (GH, Ashby, Workable…). */
+function jdFromJsonLd() {
+  try {
+    for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+      const raw = (el.textContent || "").trim();
+      if (!raw) continue;
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const stack = Array.isArray(data) ? [...data] : [data];
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node || typeof node !== "object") continue;
+        if (Array.isArray(node["@graph"])) stack.push(...node["@graph"]);
+        const type = node["@type"];
+        const types = Array.isArray(type) ? type : [type];
+        if (!types.some((t) => /jobposting/i.test(String(t || "")))) continue;
+        if (node.description) {
+          const text = normalizeJdText(jdHtmlToText(String(node.description)));
+          if (isDecentJobDescription(text)) return text;
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
+// Priority tiers: ATS-specific containers first, then common patterns, then generic content.
+const JD_SELECTOR_TIERS = [
+  [
+    '[data-automation-id="jobPostingDescription"]', // Workday
+    '[data-qa="job-description"]', // Lever
+    "#content .content-holder", // Greenhouse custom embeds
+    "#job-description",
+    "#jobDescriptionText",
+    ".job__description",
+    "[data-ui='job-description']", // Workable
+  ],
+  [
+    "[class*='job-description' i]",
+    "[class*='jobdescription' i]",
+    "[id*='job-description' i]",
+    "[id*='jobdescription' i]",
+    "[data-testid*='job-description' i]",
+    "[data-testid*='jobdescription' i]",
+    "[class*='posting-body' i]",
+    "[class*='postingbody' i]",
+    "[class*='description-content' i]",
+  ],
+  ["#content", "article", "main", "[role='main']"],
+];
+
+/** Best-effort JD extraction: JSON-LD first, then progressively looser DOM selectors. */
+function extractJobDescription() {
+  const fromJsonLd = jdFromJsonLd();
+  if (fromJsonLd) return fromJsonLd.slice(0, MAX_JD_CHARS);
+
+  for (const tier of JD_SELECTOR_TIERS) {
+    let best = "";
+    for (const sel of tier) {
+      let nodes;
+      try {
+        nodes = document.querySelectorAll(sel);
+      } catch {
+        continue;
+      }
+      for (const node of nodes) {
+        const text = jdTextFromElement(node);
+        if (isDecentJobDescription(text) && text.length > best.length) best = text;
+      }
+    }
+    if (best) return best.slice(0, MAX_JD_CHARS);
+  }
+  return "";
+}
+
 function isNoisePage() {
   const host = location.hostname.toLowerCase();
   const path = location.pathname.toLowerCase();
@@ -2604,6 +2757,7 @@ function writeJobCtx(parsed) {
     source: src,
     locked: true,
     at: Date.now(),
+    jobDescription: typeof parsed.jobDescription === "string" ? parsed.jobDescription : "",
   };
   const json = JSON.stringify(payload);
   sessionStorage.setItem(`applytrack:job:${parsed.jobKey}`, json);
@@ -2673,8 +2827,14 @@ function rememberJob(parsed, opts = {}) {
 
   try {
     const existing = readJobCtx(`applytrack:job:${parsed.jobKey}`);
-    // Solid lock for this posting — frozen until tab session ends
+    const existingJdOk = isDecentJobDescription(existing?.jobDescription);
+    const parsedJdOk = isDecentJobDescription(parsed.jobDescription);
+    // Solid lock for this posting — frozen until tab session ends. Still let a
+    // still-missing JD populate in from a later parse of the same listing.
     if (!force && existing && existing.jobKey === parsed.jobKey && isSolidLock(existing, src)) {
+      if (!existingJdOk && parsedJdOk) {
+        writeJobCtx({ ...existing, jobDescription: parsed.jobDescription });
+      }
       return;
     }
 
@@ -2691,6 +2851,12 @@ function rememberJob(parsed, opts = {}) {
         ? existing.company
         : scrubCompany(parsed.company, src) || parsed.company || existing?.company;
     const url = existing?.url || parsed.url;
+    // Once decent, a JD is frozen too — never replaced by a shorter/empty capture.
+    const jobDescription = existingJdOk
+      ? existing.jobDescription
+      : parsedJdOk
+        ? parsed.jobDescription
+        : existing?.jobDescription || parsed.jobDescription || "";
 
     if (isWeakRole(role, src)) return;
 
@@ -2699,6 +2865,7 @@ function rememberJob(parsed, opts = {}) {
       role,
       company,
       url,
+      jobDescription,
       locked: true,
     });
   } catch {
@@ -2751,6 +2918,9 @@ function mergeRememberedJob(parsed, source) {
         url: prev.url || parsed.url,
         source: prev.source || parsed.source || src,
         locked: true,
+        jobDescription: isDecentJobDescription(prev.jobDescription)
+          ? prev.jobDescription
+          : parsed.jobDescription || prev.jobDescription || "",
       };
     }
 
@@ -2769,6 +2939,9 @@ function mergeRememberedJob(parsed, source) {
     const prevCoOk = isUsableCompany(prevCo, role, lockSrc);
     const nextCoOk = isUsableCompany(nextCo, role, src);
     const company = prevCoOk ? prevCo : nextCoOk ? nextCo : nextCo || prevCo || parsed.company;
+    const jobDescription = isDecentJobDescription(prev.jobDescription)
+      ? prev.jobDescription
+      : parsed.jobDescription || prev.jobDescription || "";
 
     return {
       ...parsed,
@@ -2777,6 +2950,7 @@ function mergeRememberedJob(parsed, source) {
       company,
       url: prev.url || parsed.url,
       source: prev.source || parsed.source || src,
+      jobDescription,
     };
   } catch {
     return parsed;
@@ -2818,6 +2992,9 @@ function resolveJobPayload(parsed) {
       url: prev.url || merged.url,
       source: lockSrc,
       locked: true,
+      jobDescription: isDecentJobDescription(prev.jobDescription)
+        ? prev.jobDescription
+        : merged.jobDescription || prev.jobDescription || "",
     };
   }
   return typeof normalizeParsed === "function" ? normalizeParsed(merged) : merged;
@@ -3225,6 +3402,21 @@ function parseJobPage() {
       jobKey: null,
       source: "web",
     };
+  }
+
+  // Extract the JD once per posting — skip the (relatively expensive) DOM walk
+  // once a decent one is already locked in for this jobKey/source.
+  try {
+    if (typeof extractJobDescription === "function") {
+      const lockedCtx =
+        (parsed.jobKey && readJobCtx(`applytrack:job:${parsed.jobKey}`)) ||
+        (parsed.source && readJobCtx(`applytrack:ctx:${parsed.source}`));
+      if (!isDecentJobDescription(lockedCtx?.jobDescription)) {
+        parsed.jobDescription = extractJobDescription();
+      }
+    }
+  } catch {
+    /* ignore */
   }
 
   // Always merge solid locks — including weak/web wizard pages

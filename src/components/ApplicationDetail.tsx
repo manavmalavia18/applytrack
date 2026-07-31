@@ -42,6 +42,7 @@ export function ApplicationDetail({ app, busy, onClose, onSave, onDelete }: Prop
     status: app.status as ApplicationStatus,
     reqId: app.reqId,
     notes: app.notes,
+    jobDescription: app.jobDescription || "",
     appliedAt: toDateInputValue(app.appliedAt),
     followUpAt: toDateInputValue(app.followUpAt),
   });
@@ -56,6 +57,7 @@ export function ApplicationDetail({ app, busy, onClose, onSave, onDelete }: Prop
       status: app.status as ApplicationStatus,
       reqId: app.reqId,
       notes: app.notes,
+      jobDescription: app.jobDescription || "",
       appliedAt: toDateInputValue(app.appliedAt),
       followUpAt: toDateInputValue(app.followUpAt),
     });
@@ -86,6 +88,7 @@ export function ApplicationDetail({ app, busy, onClose, onSave, onDelete }: Prop
       status: form.status,
       reqId: form.reqId.trim(),
       notes: form.notes,
+      jobDescription: form.jobDescription,
       appliedAt: form.appliedAt || null,
       followUpAt: form.followUpAt || null,
     });
@@ -170,6 +173,28 @@ export function ApplicationDetail({ app, busy, onClose, onSave, onDelete }: Prop
                 {app.jobKey || "—"}
               </p>
             </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Job description
+            </h3>
+            {form.jobDescription ? (
+              <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 text-sm leading-relaxed text-zinc-700">
+                {form.jobDescription}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/50 p-3 text-sm text-zinc-500">
+                No job description captured yet. Paste one below to keep it with this application.
+              </p>
+            )}
+            <textarea
+              value={form.jobDescription}
+              onChange={(e) => set("jobDescription", e.target.value)}
+              rows={4}
+              placeholder="Paste the job description here…"
+              className="rounded-md border border-zinc-300 px-3 py-2 text-sm"
+            />
           </section>
 
           <section className="flex flex-col gap-3">

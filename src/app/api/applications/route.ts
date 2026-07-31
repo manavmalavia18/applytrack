@@ -7,9 +7,11 @@ import {
   baseJobKey,
   cleanRoleTitle,
   detectSource,
+  isDecentJobDescription,
   isJunkRole,
   isStaleApplication,
   normalizeJobUrl,
+  sanitizeJobDescription,
 } from "@/lib/job-key";
 import { isStatus } from "@/lib/statuses";
 
@@ -57,6 +59,7 @@ export async function POST(req: NextRequest) {
       : "applied";
     const notes = String(body.notes || "");
     const reqId = typeof body.reqId === "string" ? body.reqId.trim().slice(0, 120) : "";
+    const jobDescription = sanitizeJobDescription(body.jobDescription);
     const forceManual = Boolean(body.manual) || body.source === "manual";
     let url = String(body.url || "").trim();
     if (!url) {
@@ -123,6 +126,11 @@ export async function POST(req: NextRequest) {
         company && company !== "Unknown"
           ? company
           : latest.company;
+      // Once a solid JD is on file, never let a later save (e.g. from a wizard/
+      // confirmation page with no real JD) blank it out or replace it.
+      const nextJobDescription = isDecentJobDescription(latest.jobDescription)
+        ? latest.jobDescription
+        : (jobDescription ?? latest.jobDescription);
       const [updated] = await db
         .update(applications)
         .set({
@@ -132,6 +140,7 @@ export async function POST(req: NextRequest) {
           status,
           notes: notes || latest.notes,
           reqId: reqId || latest.reqId,
+          jobDescription: nextJobDescription,
           source: forceManual ? "manual" : detectSource(url),
           appliedAt: status === "saved" ? latest.appliedAt : latest.appliedAt || now,
           followUpAt: followUpAt ?? latest.followUpAt,
@@ -166,6 +175,7 @@ export async function POST(req: NextRequest) {
             : notes,
         source: forceManual ? "manual" : detectSource(url),
         reqId,
+        jobDescription,
         appliedAt: status === "saved" ? null : now,
         followUpAt,
       })

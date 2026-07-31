@@ -39,6 +39,7 @@ export default async function DashboardPage() {
     jobKey: r.jobKey,
     reqId: r.reqId,
     notes: r.notes,
+    jobDescription: r.jobDescription,
     appliedAt: r.appliedAt ? r.appliedAt.toISOString() : null,
     followUpAt: r.followUpAt ? r.followUpAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
