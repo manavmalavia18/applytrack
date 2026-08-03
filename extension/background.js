@@ -46,6 +46,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(result);
       return;
     }
+    if (message.type === "FILL_ANSWERS") {
+      const result = await api("/api/fill-answers", {
+        method: "POST",
+        body: message.payload,
+      });
+      sendResponse(result);
+      return;
+    }
     if (message.type === "DRAFT_ANSWERS") {
       const result = await api("/api/draft-answers", {
         method: "POST",

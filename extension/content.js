@@ -125,9 +125,10 @@
     let application = null;
     let error = null;
     let busy = false;
-    let drafting = false;
-    let drafts = [];
-    let draftError = null;
+    let filling = false;
+    let fillError = null;
+    let filledMatches = [];
+    let unmatchedFields = [];
     let autoNote = null;
     let scraped = [];
     let dead = false;
@@ -229,11 +230,13 @@
         .primary { background: #0f766e; color: #fff; }
         .dark { background: #0f172a; color: #fff; }
         .ghost { background: #f1f5f9; color: #0f766e; }
-        .drafts { display: flex; flex-direction: column; gap: 10px; max-height: 40vh; overflow: auto; }
-        .card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; background: #f8fafc; }
         .q { font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 6px; }
-        .a { font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; }
-        .ins { border: 1px solid #cbd5e1; background: #fff; color: #0f766e; border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; width: auto; }
+        .fillsummary { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 4px; }
+        .filled-hint { font-size: 12px; color: #166534; background: #f0fdf4; border-radius: 8px; padding: 8px 10px; }
+        .unmatched { border: 1px solid #fde68a; background: #fffbeb; border-radius: 10px; padding: 8px 10px; }
+        .unmatched .q { color: #92400e; margin-bottom: 6px; }
+        .ua { font-size: 12px; color: #78350f; padding: 3px 0; border-top: 1px dashed #fde68a; }
+        .ua:first-of-type { border-top: none; }
       </style>
       <button class="tab" id="tab" type="button">ApplyTrack</button>
       <aside class="panel" id="panel">
@@ -465,18 +468,24 @@
         }
         ${autoNote ? `<p class="hint">${escapeHtml(autoNote)}</p>` : ""}
         <div class="actions">
-          <button class="act dark" id="draft" ${drafting || busy ? "disabled" : ""}>
-            ${drafting ? "Drafting…" : "Draft form answers with AI"}
+          <button class="act primary" id="fillbank" ${filling || busy ? "disabled" : ""}>
+            ${filling ? "Filling…" : "Fill from answer bank"}
           </button>
       `;
 
-      if (draftError) html += `<p class="hint err">${escapeHtml(draftError)}</p>`;
-      if (drafts.length) {
-        html += `<button class="act ghost" id="fillall">Insert all (${drafts.length})</button><div class="drafts">`;
-        drafts.forEach((d, i) => {
-          html += `<div class="card"><div class="q">${escapeHtml(d.label)}</div><div class="a">${escapeHtml(d.answer)}</div>
-            <button class="ins" data-i="${i}">Insert</button></div>`;
-        });
+      if (fillError) html += `<p class="hint err">${escapeHtml(fillError)}</p>`;
+      if (filledMatches.length || unmatchedFields.length) {
+        html += `<div class="fillsummary">`;
+        if (filledMatches.length) {
+          html += `<p class="filled-hint">Filled ${filledMatches.length} field${filledMatches.length === 1 ? "" : "s"} from your answer bank.</p>`;
+        }
+        if (unmatchedFields.length) {
+          html += `<div class="unmatched"><div class="q">Needs manual answer (${unmatchedFields.length})</div>`;
+          unmatchedFields.forEach((u) => {
+            html += `<div class="ua">${escapeHtml(u.label)}</div>`;
+          });
+          html += `</div>`;
+        }
         html += `</div>`;
       }
 
@@ -522,21 +531,12 @@
       body.querySelector("#role")?.addEventListener("change", syncManual);
       body.querySelector("#company")?.addEventListener("change", syncManual);
       body.querySelector("#reqId")?.addEventListener("change", syncManual);
-      body.querySelector("#draft")?.addEventListener("click", draftAnswers);
+      body.querySelector("#fillbank")?.addEventListener("click", () => fillFromBank());
       body.querySelector("#mark")?.addEventListener("click", () => save("applied"));
       body.querySelector("#save")?.addEventListener("click", () => save("saved"));
       body.querySelector("#newcycle")?.addEventListener("click", () =>
         save("applied", { newCycle: true }),
       );
-      body.querySelector("#fillall")?.addEventListener("click", () => {
-        drafts.forEach((d) => fillField(d.id, d.answer));
-      });
-      body.querySelectorAll(".ins").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const d = drafts[Number(btn.getAttribute("data-i"))];
-          if (d) fillField(d.id, d.answer);
-        });
-      });
     }
 
     function escapeHtml(s) {
@@ -586,7 +586,7 @@
         if (!label || label.length < 12) continue;
         const isLong =
           input.tagName === "TEXTAREA" ||
-          /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain/i.test(
+          /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain|visa|sponsor|authoriz|work\s*permit|relocat|remote|hybrid|onsite|salary|compensation|start\s*date|available\s*to\s*start|notice\s*period|\bai\b|\bllm\b|machine\s*learning|\btest(ing)?\b|playwright|cypress|\bqa\b|\baws\b|\bazure\b|\bgcp\b|cloud|microservice|startup|proud|accomplishment/i.test(
             label,
           );
         if (!isLong) continue;
@@ -760,34 +760,35 @@
       paintTab();
     }
 
-    async function draftAnswers() {
-      drafting = true;
-      draftError = null;
-      drafts = [];
+    async function fillFromBank() {
+      filling = true;
+      fillError = null;
+      filledMatches = [];
+      unmatchedFields = [];
       setOpen(true);
       render();
       const questions = scrapeFields();
       if (!questions.length) {
-        drafting = false;
-        draftError = "No long-form questions found. Open the application form, then try again.";
+        filling = false;
+        fillError = "No long-form questions found. Open the application form, then try again.";
         render();
         return;
       }
-      const res = await send("DRAFT_ANSWERS", {
+      const res = await send("FILL_ANSWERS", {
         questions,
         company: parsed?.company || "",
         role: parsed?.role || "",
+        jobDescription: parsed?.jobDescription || "",
       });
-      drafting = false;
+      filling = false;
       if (!res?.ok) {
-        draftError = res?.error || "Draft failed";
+        fillError = res?.error || "Fill failed";
         render();
         return;
       }
-      const byId = Object.fromEntries((res.answers || []).map((a) => [a.id, a.answer]));
-      drafts = scraped
-        .map((f) => ({ id: f.id, label: f.label, answer: byId[f.id] || "" }))
-        .filter((d) => d.answer);
+      filledMatches = res.answers || [];
+      unmatchedFields = res.unmatched || [];
+      filledMatches.forEach((m) => fillField(m.id, m.answer));
       render();
     }
 
