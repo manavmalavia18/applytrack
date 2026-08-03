@@ -555,21 +555,76 @@
       return r.width > 0 && r.height > 0;
     }
 
+    function isJunkLabel(t) {
+      const s = String(t || "").trim();
+      if (!s) return true;
+      // Lever/Ashby internal names like cards[uuid][field0]
+      if (/^cards?\s*\[/i.test(s) || /\[[0-9a-f-]{8,}\]/i.test(s)) return true;
+      if (/^[a-z_]+\[\d+\]$/i.test(s)) return true;
+      if (/^(field|input|question)[_-]?\d+$/i.test(s)) return true;
+      return false;
+    }
+
     function labelFor(input) {
+      const clean = (raw) => {
+        const t = String(raw || "")
+          .replace(/\s+/g, " ")
+          .replace(/\*$/, "")
+          .trim();
+        return isJunkLabel(t) ? "" : t;
+      };
+
       if (input.id) {
         try {
           const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-          if (byFor) return byFor.innerText.trim().replace(/\s+/g, " ");
+          const t = clean(byFor?.innerText);
+          if (t.length > 2) return t;
         } catch {
           /* ignore */
         }
       }
       const parentLabel = input.closest("label");
       if (parentLabel) {
-        const t = parentLabel.innerText.trim().replace(/\s+/g, " ");
+        const clone = parentLabel.cloneNode(true);
+        clone.querySelectorAll("input,textarea,select,button").forEach((n) => n.remove());
+        const t = clean(clone.innerText);
         if (t.length > 2) return t;
       }
-      return (input.getAttribute("aria-label") || input.getAttribute("placeholder") || input.name || "").trim();
+
+      const aria = clean(input.getAttribute("aria-label"));
+      if (aria.length > 2) return aria;
+
+      // Lever / custom boards: question text in nearby heading or application-question block
+      const block = input.closest(
+        "[class*='application-question'], [class*='ApplicationField'], [class*='question'], [data-qa*='question'], fieldset, .form-group, li, section",
+      );
+      if (block) {
+        const heading = block.querySelector(
+          "label, .application-label, [class*='label'], [class*='Label'], h3, h4, h5, legend, p, span",
+        );
+        const t = clean(heading?.innerText);
+        if (t.length > 2 && t.length < 280) return t;
+        // First non-input text node chunk
+        const blockText = clean(
+          Array.from(block.querySelectorAll("div,p,span,label"))
+            .map((el) => el.innerText)
+            .find((x) => x && x.trim().length > 12 && !isJunkLabel(x) && !x.includes(input.value || "xxx")),
+        );
+        if (blockText.length > 2 && blockText.length < 280) return blockText;
+      }
+
+      // Previous sibling text (common on Lever)
+      let sib = input.previousElementSibling;
+      for (let n = 0; n < 4 && sib; n++, sib = sib.previousElementSibling) {
+        const t = clean(sib.innerText);
+        if (t.length > 2 && t.length < 280) return t;
+      }
+
+      const ph = clean(input.getAttribute("placeholder"));
+      if (ph.length > 2) return ph;
+
+      // Never fall back to name=cards[uuid][fieldN]
+      return "";
     }
 
     function scrapeFields() {
