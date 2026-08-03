@@ -1224,6 +1224,8 @@
         });
         if (!res?.ok) return false;
         markLogged(parsed.jobKey);
+        // Backup learn if fields still exist (usually empty after thank-you).
+        void learnAnswersOnSubmit();
         if (isTop && typeof window.__applytrackOpen === "function") {
           window.__applytrackOpen();
         }
@@ -1323,6 +1325,8 @@
         if (!isFinalSubmit(text)) return;
         lastClick = now;
         currentParsed();
+        // Capture answers NOW — the page often navigates away and clears fields.
+        void learnAnswersOnSubmit();
         startWatch();
       },
       true,
@@ -1332,13 +1336,89 @@
       "submit",
       () => {
         const now = Date.now();
-        if (now - lastClick < 1500) return;
+        if (now - lastClick < 1500) {
+          // Still learn — click handler may have fired already; dedupe via lastLearnAt.
+          void learnAnswersOnSubmit();
+          return;
+        }
         lastClick = now;
         currentParsed();
+        void learnAnswersOnSubmit();
         startWatch();
       },
       true,
     );
+
+    let lastLearnAt = 0;
+    /** Scrape filled long-form answers on Submit and persist for reuse (no LLM). */
+    async function learnAnswersOnSubmit() {
+      const now = Date.now();
+      if (now - lastLearnAt < 2000) return;
+      lastLearnAt = now;
+      try {
+        if (!chrome?.runtime?.id) return;
+        const nodes = [
+          ...document.querySelectorAll("textarea"),
+          ...document.querySelectorAll('input[type="text"]'),
+          ...document.querySelectorAll("input:not([type])"),
+        ];
+        const entries = [];
+        for (const input of nodes) {
+          if (!(input instanceof HTMLElement)) continue;
+          if (input.disabled || input.type === "password") continue;
+          const st = getComputedStyle(input);
+          if (st.display === "none" || st.visibility === "hidden") continue;
+          const value = String(input.value || "").trim();
+          if (!value) continue;
+          if (typeof shouldLearnValue === "function" && !shouldLearnValue(value)) continue;
+
+          let label = "";
+          if (input.id) {
+            try {
+              const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+              label = (byFor?.innerText || "").trim().replace(/\s+/g, " ");
+            } catch {
+              /* ignore */
+            }
+          }
+          if (!label) {
+            const block = input.closest(
+              "[class*='question'], [class*='Question'], fieldset, .form-group, label, li, section",
+            );
+            const heading = block?.querySelector("label, h3, h4, legend, p, span");
+            label = (heading?.innerText || block?.innerText || "").trim().replace(/\s+/g, " ");
+          }
+          if (!label || label.length < 6) continue;
+          if (/^cards?\s*\[/i.test(label) || /\[[0-9a-f-]{8,}\]/i.test(label)) continue;
+          // Keep label short — first sentence / line
+          label = label.split(/\n/)[0].slice(0, 240);
+          entries.push({ label, value });
+        }
+        if (!entries.length) return;
+
+        let company = "";
+        try {
+          if (typeof readJobCtx === "function") {
+            const latest = readJobCtx("applytrack:job:latest");
+            if (latest?.company) company = latest.company;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (!company) {
+          const p = currentParsed();
+          company = p?.company || "";
+        }
+        const companyKey =
+          typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
+        await chrome.runtime.sendMessage({
+          type: "LEARN_ANSWERS",
+          payload: { companyKey, companyName: company, entries },
+        });
+      } catch (err) {
+        console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
+      }
+    }
 
     // Confirmation page (e.g. landed here after Simplify submit / Workable thank-you)
     async function checkThankYou() {
