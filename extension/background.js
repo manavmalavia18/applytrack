@@ -1,5 +1,16 @@
+// Shared normalize/merge/lookup helpers for "remember answers" (chrome.storage.local only).
+importScripts("learned-answers.js");
+
 async function getConfig() {
   return chrome.storage.sync.get(["apiBase", "apiToken"]);
+}
+
+async function getLearnedStore() {
+  const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+  return {
+    byQuestion: learnedAnswers?.byQuestion || {},
+    byCompany: learnedAnswers?.byCompany || {},
+  };
 }
 
 async function api(path, { method = "GET", body } = {}) {
@@ -65,6 +76,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "GET_PROFILE") {
       const result = await api("/api/profile");
       sendResponse(result);
+      return;
+    }
+    if (message.type === "LEARN_ANSWERS") {
+      const p = message.payload || {};
+      const store = await getLearnedStore();
+      const { store: next, learnedCount } = mergeLearnedAnswers(store, {
+        companyKey: p.companyKey || "",
+        entries: Array.isArray(p.entries) ? p.entries : [],
+      });
+      await chrome.storage.local.set({ learnedAnswers: next });
+      sendResponse({ ok: true, learned: learnedCount });
+      return;
+    }
+    if (message.type === "LOOKUP_LEARNED") {
+      const p = message.payload || {};
+      const store = await getLearnedStore();
+      const answers = lookupLearnedAnswers(store, {
+        questions: Array.isArray(p.questions) ? p.questions : [],
+        companyKey: p.companyKey || "",
+      });
+      sendResponse({ ok: true, answers });
       return;
     }
     sendResponse({ ok: false, error: "unknown" });

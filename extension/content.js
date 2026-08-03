@@ -128,7 +128,11 @@
     let filling = false;
     let fillError = null;
     let filledMatches = [];
+    let filledBankCount = 0;
+    let filledLearnedCount = 0;
     let unmatchedFields = [];
+    let remembering = false;
+    let rememberNote = null;
     let autoNote = null;
     let scraped = [];
     let dead = false;
@@ -471,13 +475,20 @@
           <button class="act primary" id="fillbank" ${filling || busy ? "disabled" : ""}>
             ${filling ? "Filling…" : "Fill from answer bank"}
           </button>
+          <button class="act ghost" id="remember" ${remembering || busy ? "disabled" : ""}>
+            ${remembering ? "Saving…" : "Remember answers on this page"}
+          </button>
       `;
 
+      if (rememberNote) html += `<p class="hint">${escapeHtml(rememberNote)}</p>`;
       if (fillError) html += `<p class="hint err">${escapeHtml(fillError)}</p>`;
       if (filledMatches.length || unmatchedFields.length) {
         html += `<div class="fillsummary">`;
-        if (filledMatches.length) {
-          html += `<p class="filled-hint">Filled ${filledMatches.length} field${filledMatches.length === 1 ? "" : "s"} from your answer bank.</p>`;
+        if (filledBankCount || filledLearnedCount) {
+          const parts = [];
+          if (filledBankCount) parts.push(`${filledBankCount} from answer bank`);
+          if (filledLearnedCount) parts.push(`${filledLearnedCount} from saved answers`);
+          html += `<p class="filled-hint">Filled ${parts.join(", ")}.</p>`;
         }
         if (unmatchedFields.length) {
           html += `<div class="unmatched"><div class="q">Needs manual answer (${unmatchedFields.length})</div>`;
@@ -532,6 +543,7 @@
       body.querySelector("#company")?.addEventListener("change", syncManual);
       body.querySelector("#reqId")?.addEventListener("change", syncManual);
       body.querySelector("#fillbank")?.addEventListener("click", () => fillFromBank());
+      body.querySelector("#remember")?.addEventListener("click", () => rememberAnswers());
       body.querySelector("#mark")?.addEventListener("click", () => save("applied"));
       body.querySelector("#save")?.addEventListener("click", () => save("saved"));
       body.querySelector("#newcycle")?.addEventListener("click", () =>
@@ -663,6 +675,41 @@
       else input.value = answer;
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    /**
+     * "Remember answers I typed" — scrape currently-filled long-form fields and
+     * persist any non-empty, non-contact-info values via chrome.storage.local
+     * (see extension/learned-answers.js). Never blocks the caller on failure.
+     */
+    async function learnAnswersFromPage(companyName) {
+      try {
+        const fields = scrapeFields();
+        const entries = fields
+          .filter((f) => f.currentValue && f.currentValue.trim())
+          .map((f) => ({ label: f.label, value: f.currentValue.trim() }));
+        if (!entries.length) return 0;
+        const company = companyName || parsed?.company || "";
+        const companyKey = typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
+        const res = await send("LEARN_ANSWERS", { companyKey, companyName: company, entries });
+        return res?.ok ? res.learned || 0 : 0;
+      } catch (err) {
+        console.warn("[ApplyTrack] learnAnswersFromPage failed", err);
+        return 0;
+      }
+    }
+
+    async function rememberAnswers() {
+      remembering = true;
+      rememberNote = null;
+      render();
+      const learned = await learnAnswersFromPage(parsed?.company);
+      remembering = false;
+      rememberNote =
+        learned > 0
+          ? `Saved ${learned} answer${learned === 1 ? "" : "s"} for next time.`
+          : "No new answers to save yet — fill in some questions first.";
+      render();
     }
 
     async function refreshParsed() {
@@ -805,6 +852,8 @@
       } catch {
         /* ignore */
       }
+      // Learn from whatever the user typed before this Mark Sent / Save for later.
+      void learnAnswersFromPage(parsed?.company);
       if (opts.auto) {
         autoNote = "Logged as sent after the site confirmed your submission.";
         setOpen(true);
@@ -819,6 +868,8 @@
       filling = true;
       fillError = null;
       filledMatches = [];
+      filledBankCount = 0;
+      filledLearnedCount = 0;
       unmatchedFields = [];
       setOpen(true);
       render();
@@ -835,15 +886,36 @@
         role: parsed?.role || "",
         jobDescription: parsed?.jobDescription || "",
       });
-      filling = false;
       if (!res?.ok) {
+        filling = false;
         fillError = res?.error || "Fill failed";
         render();
         return;
       }
-      filledMatches = res.answers || [];
-      unmatchedFields = res.unmatched || [];
-      filledMatches.forEach((m) => fillField(m.id, m.answer));
+      const bankMatches = res.answers || [];
+      let remaining = res.unmatched || [];
+      filledBankCount = bankMatches.length;
+      bankMatches.forEach((m) => fillField(m.id, m.answer));
+
+      // Answer bank couldn't match these — try answers the user typed before
+      // (same company first, then any question match) via chrome.storage.local.
+      let learnedMatches = [];
+      if (remaining.length) {
+        const companyKey =
+          typeof companyKeyFromName === "function" ? companyKeyFromName(parsed?.company || "") : "";
+        const learnedRes = await send("LOOKUP_LEARNED", { questions: remaining, companyKey });
+        if (learnedRes?.ok) {
+          learnedMatches = learnedRes.answers || [];
+          const filledIds = new Set(learnedMatches.map((m) => m.id));
+          remaining = remaining.filter((q) => !filledIds.has(q.id));
+          learnedMatches.forEach((m) => fillField(m.id, m.answer));
+        }
+      }
+
+      filling = false;
+      filledLearnedCount = learnedMatches.length;
+      filledMatches = [...bankMatches, ...learnedMatches];
+      unmatchedFields = remaining;
       render();
     }
 
