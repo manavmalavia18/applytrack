@@ -639,26 +639,36 @@
       return "";
     }
 
+    function fieldValue(el) {
+      if (!el) return "";
+      if (el.isContentEditable) return (el.innerText || el.textContent || "").trim();
+      return String(el.value || "").trim();
+    }
+
     function scrapeFields() {
       const nodes = [
         ...document.querySelectorAll("textarea"),
         ...document.querySelectorAll('input[type="text"]'),
         ...document.querySelectorAll("input:not([type])"),
+        ...document.querySelectorAll("[contenteditable='true']"),
       ];
       const out = [];
       let i = 0;
       for (const input of nodes) {
         if (!visible(input) || input.disabled) continue;
         const label = labelFor(input);
-        if (!label || label.length < 12) continue;
+        if (!label || label.length < 8) continue;
+        const value = fieldValue(input);
         const isLong =
           input.tagName === "TEXTAREA" ||
-          /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain|visa|sponsor|authoriz|work\s*permit|relocat|remote|hybrid|onsite|salary|compensation|start\s*date|available\s*to\s*start|notice\s*period|\bai\b|\bllm\b|machine\s*learning|\btest(ing)?\b|playwright|cypress|\bqa\b|\baws\b|\bazure\b|\bgcp\b|cloud|microservice|startup|proud|accomplishment/i.test(
+          input.isContentEditable ||
+          value.length >= 40 ||
+          /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain|visa|sponsor|authoriz|work\s*permit|relocat|remote|hybrid|onsite|salary|compensation|start\s*date|available\s*to\s*start|notice\s*period|\bai\b|\bllm\b|machine\s*learning|\btest(ing)?\b|playwright|cypress|\bqa\b|\baws\b|\bazure\b|\bgcp\b|cloud|microservice|startup|proud|accomplishment|additional|anything else|hear about/i.test(
             label,
           );
         if (!isLong) continue;
         const id = `q_${i++}`;
-        out.push({ id, label, el: input, currentValue: input.value || "" });
+        out.push({ id, label, el: input, currentValue: value });
       }
       scraped = out;
       return out.map(({ id, label, currentValue }) => ({ id, label, currentValue }));
@@ -682,6 +692,23 @@
      * persist any non-empty, non-contact-info values via chrome.storage.local
      * (see extension/learned-answers.js). Never blocks the caller on failure.
      */
+    async function persistLearnedEntries(entries, companyName) {
+      if (!entries?.length || typeof mergeLearnedAnswers !== "function") return 0;
+      const company = companyName || parsed?.company || "";
+      const companyKey = typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
+      // Write chrome.storage.local directly — more reliable than messaging during navigation.
+      const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+      const { store, learnedCount } = mergeLearnedAnswers(
+        {
+          byQuestion: learnedAnswers?.byQuestion || {},
+          byCompany: learnedAnswers?.byCompany || {},
+        },
+        { companyKey, entries },
+      );
+      await chrome.storage.local.set({ learnedAnswers: store });
+      return learnedCount;
+    }
+
     async function learnAnswersFromPage(companyName) {
       try {
         const fields = scrapeFields();
@@ -689,15 +716,25 @@
           .filter((f) => f.currentValue && f.currentValue.trim())
           .map((f) => ({ label: f.label, value: f.currentValue.trim() }));
         if (!entries.length) return 0;
-        const company = companyName || parsed?.company || "";
-        const companyKey = typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
-        const res = await send("LEARN_ANSWERS", { companyKey, companyName: company, entries });
-        return res?.ok ? res.learned || 0 : 0;
+        return await persistLearnedEntries(entries, companyName || parsed?.company);
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersFromPage failed", err);
         return 0;
       }
     }
+
+    // Keep learning while the user types so Submit doesn't have to win a race.
+    let learnDebounce = null;
+    document.addEventListener(
+      "change",
+      () => {
+        if (learnDebounce) clearTimeout(learnDebounce);
+        learnDebounce = setTimeout(() => {
+          void learnAnswersFromPage(parsed?.company);
+        }, 800);
+      },
+      true,
+    );
 
     async function rememberAnswers() {
       remembering = true;
@@ -936,9 +973,33 @@
     }
     paintTab();
     void refresh(false);
+
+    // Auto-fill from bank + learned answers when an application form is open.
+    let autoFilledOnce = false;
+    async function maybeAutoFillLearned() {
+      if (autoFilledOnce || found) return;
+      const onAppForm =
+        /\/application\b|\/apply\b|oneclick|manualapplication|applicantflow/i.test(location.href) ||
+        document.querySelectorAll("textarea").length >= 1;
+      if (!onAppForm) return;
+      const questions = scrapeFields();
+      const empty = questions.filter((q) => !q.currentValue);
+      if (empty.length < 1) return;
+      autoFilledOnce = true;
+      await fillFromBank();
+      if (filledMatches.length) {
+        autoNote = `Auto-filled ${filledMatches.length} saved answer${filledMatches.length === 1 ? "" : "s"}.`;
+        setOpen(true);
+        render();
+      }
+    }
+    setTimeout(() => void maybeAutoFillLearned(), 1200);
+    setTimeout(() => void maybeAutoFillLearned(), 3500);
+
     // SPA boards often hydrate the title after first paint
     if (
       parsed?.source === "greenhouse" ||
+      parsed?.source === "ashby" ||
       parsed?.source === "pinpoint" ||
       parsed?.source === "rippling" ||
       parsed?.source === "taleo" ||
@@ -957,6 +1018,7 @@
       parsed?.source === "adp" ||
       parsed?.source === "oracle" ||
       location.hostname.includes("greenhouse") ||
+      location.hostname.includes("ashbyhq") ||
       location.hostname.includes("pinpointhq") ||
       location.hostname.includes("rippling") ||
       location.hostname.includes("taleo") ||
@@ -1150,12 +1212,13 @@
     /** Final submit — watch for success before writing Applied. */
     function isFinalSubmit(text) {
       const t = text.trim().replace(/\s+/g, " ");
-      if (!t || t.length > 80) return false;
-      if (/^(submit application|send application|submit my application)$/i.test(t)) return true;
+      if (!t || t.length > 100) return false;
       if (/submit(\s+my)?\s+application/i.test(t)) return true;
-      // Workday / Workable final CTAs
+      if (/send(\s+my)?\s+application/i.test(t)) return true;
+      // Workday / Workable / Ashby final CTAs
       if (/^(submit|submit your application)$/i.test(t)) return true;
       if (/^submit$/i.test(t)) return true;
+      if (/ashbyhq\.com/i.test(location.hostname) && /\bsubmit\b/i.test(t)) return true;
       // Workable sometimes uses "Send application" variants already covered;
       // also "Apply" on the last step of a short form (host-gated).
       if (
@@ -1299,6 +1362,43 @@
       return null;
     }
 
+    function onFinalSubmitGesture() {
+      const now = Date.now();
+      if (now - lastClick < 800) {
+        void learnAnswersOnSubmit();
+        return;
+      }
+      lastClick = now;
+      currentParsed();
+      // Capture answers NOW — Ashby often navigates and clears fields immediately.
+      void learnAnswersOnSubmit();
+      startWatch();
+    }
+
+    // pointerdown fires before React/Ashby clears the form (earlier than click).
+    document.addEventListener(
+      "pointerdown",
+      (e) => {
+        const node = findClickableInPath(e);
+        if (!node) return;
+        if (
+          node.closest?.(
+            "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent']",
+          )
+        ) {
+          return;
+        }
+        const text = clickText(node);
+        if (isApplyStart(text)) {
+          currentParsed();
+          return;
+        }
+        if (!isFinalSubmit(text)) return;
+        onFinalSubmitGesture();
+      },
+      true,
+    );
+
     document.addEventListener(
       "click",
       (e) => {
@@ -1312,22 +1412,12 @@
           return;
         }
         const text = clickText(node);
-        const now = Date.now();
-        if (now - lastClick < 1500) return;
-
         if (isApplyStart(text)) {
-          lastClick = now;
-          // Warm cache only — opening the form is not "Applied"
           currentParsed();
           return;
         }
-
         if (!isFinalSubmit(text)) return;
-        lastClick = now;
-        currentParsed();
-        // Capture answers NOW — the page often navigates away and clears fields.
-        void learnAnswersOnSubmit();
-        startWatch();
+        onFinalSubmitGesture();
       },
       true,
     );
@@ -1335,32 +1425,24 @@
     document.addEventListener(
       "submit",
       () => {
-        const now = Date.now();
-        if (now - lastClick < 1500) {
-          // Still learn — click handler may have fired already; dedupe via lastLearnAt.
-          void learnAnswersOnSubmit();
-          return;
-        }
-        lastClick = now;
-        currentParsed();
-        void learnAnswersOnSubmit();
-        startWatch();
+        onFinalSubmitGesture();
       },
       true,
     );
 
     let lastLearnAt = 0;
-    /** Scrape filled long-form answers on Submit and persist for reuse (no LLM). */
+    /** Scrape filled answers and persist to chrome.storage.local (no LLM). */
     async function learnAnswersOnSubmit() {
       const now = Date.now();
-      if (now - lastLearnAt < 2000) return;
+      if (now - lastLearnAt < 1500) return;
       lastLearnAt = now;
       try {
-        if (!chrome?.runtime?.id) return;
+        if (!chrome?.runtime?.id || typeof mergeLearnedAnswers !== "function") return;
         const nodes = [
           ...document.querySelectorAll("textarea"),
           ...document.querySelectorAll('input[type="text"]'),
           ...document.querySelectorAll("input:not([type])"),
+          ...document.querySelectorAll("[contenteditable='true']"),
         ];
         const entries = [];
         for (const input of nodes) {
@@ -1368,7 +1450,9 @@
           if (input.disabled || input.type === "password") continue;
           const st = getComputedStyle(input);
           if (st.display === "none" || st.visibility === "hidden") continue;
-          const value = String(input.value || "").trim();
+          const value = input.isContentEditable
+            ? (input.innerText || "").trim()
+            : String(input.value || "").trim();
           if (!value) continue;
           if (typeof shouldLearnValue === "function" && !shouldLearnValue(value)) continue;
 
@@ -1383,18 +1467,27 @@
           }
           if (!label) {
             const block = input.closest(
-              "[class*='question'], [class*='Question'], fieldset, .form-group, label, li, section",
+              "[class*='question'], [class*='Question'], [class*='ashby'], fieldset, .form-group, label, li, section, div",
             );
-            const heading = block?.querySelector("label, h3, h4, legend, p, span");
-            label = (heading?.innerText || block?.innerText || "").trim().replace(/\s+/g, " ");
+            const heading = block?.querySelector(
+              "label, h3, h4, legend, p, span, [class*='label'], [class*='Label']",
+            );
+            label = (heading?.innerText || "").trim().replace(/\s+/g, " ");
           }
           if (!label || label.length < 6) continue;
           if (/^cards?\s*\[/i.test(label) || /\[[0-9a-f-]{8,}\]/i.test(label)) continue;
-          // Keep label short — first sentence / line
           label = label.split(/\n/)[0].slice(0, 240);
+          // Drop label text that accidentally includes the answer
+          if (value.length > 20 && label.includes(value.slice(0, 20))) {
+            label = label.slice(0, label.indexOf(value.slice(0, 20))).trim();
+          }
+          if (label.length < 6) continue;
           entries.push({ label, value });
         }
-        if (!entries.length) return;
+        if (!entries.length) {
+          console.warn("[ApplyTrack] submit learn: no filled fields found");
+          return;
+        }
 
         let company = "";
         try {
@@ -1411,10 +1504,16 @@
         }
         const companyKey =
           typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
-        await chrome.runtime.sendMessage({
-          type: "LEARN_ANSWERS",
-          payload: { companyKey, companyName: company, entries },
-        });
+        const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+        const { store, learnedCount } = mergeLearnedAnswers(
+          {
+            byQuestion: learnedAnswers?.byQuestion || {},
+            byCompany: learnedAnswers?.byCompany || {},
+          },
+          { companyKey, entries },
+        );
+        await chrome.storage.local.set({ learnedAnswers: store });
+        console.info("[ApplyTrack] learned", learnedCount, "answers for", companyKey || "(global)");
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
       }
