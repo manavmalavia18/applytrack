@@ -120,3 +120,21 @@ test("lookupLearnedAnswers: falls back to global when no company match exists", 
   assert.equal(matches.length, 1);
   assert.equal(matches[0].scope, "global");
 });
+
+test("lookupLearnedAnswers: fuzzy-matches similar questions within the same company", () => {
+  const store = {
+    byQuestion: {},
+    byCompany: {
+      cogentsecurity: {
+        "why cogent": { answer: "Because of the security product.", updatedAt: 1 },
+      },
+    },
+  };
+  const matches = lookupLearnedAnswers(store, {
+    companyKey: "cogentsecurity",
+    questions: [{ id: "q1", label: "Why do you want to work at Cogent Security?" }],
+  });
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].answer, "Because of the security product.");
+  assert.equal(matches[0].scope, "company");
+});

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ApplyTrack",
-  "version": "0.6.6",
-  "description": "Job tracker + answer-bank autofill, no AI (Greenhouse, Ashby, Lever, Workday, LinkedIn, iCIMS, ADP, Oracle, Taleo, Dayforce, Paycom, Teamtailor, SmartRecruiters, Pinpoint, Rippling, JazzHR, SuccessFactors, Paylocity, UKG, Phenom, Salesforce, BambooHR, Workable)",
+  "version": "0.6.7",
+  "description": "Job tracker — saves your form answers per company on Submit and auto-fills next time (Greenhouse, Ashby, Lever, Workday, and more)",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
     "https://*/*",

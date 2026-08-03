@@ -128,11 +128,8 @@
     let filling = false;
     let fillError = null;
     let filledMatches = [];
-    let filledBankCount = 0;
     let filledLearnedCount = 0;
     let unmatchedFields = [];
-    let remembering = false;
-    let rememberNote = null;
     let autoNote = null;
     let scraped = [];
     let dead = false;
@@ -471,27 +468,21 @@
               }`
         }
         ${autoNote ? `<p class="hint">${escapeHtml(autoNote)}</p>` : ""}
+        <p class="hint">Answers you type are saved for this company when you Submit. Next visit → auto-fill.</p>
         <div class="actions">
-          <button class="act primary" id="fillbank" ${filling || busy ? "disabled" : ""}>
-            ${filling ? "Filling…" : "Fill from answer bank"}
-          </button>
-          <button class="act ghost" id="remember" ${remembering || busy ? "disabled" : ""}>
-            ${remembering ? "Saving…" : "Remember answers on this page"}
+          <button class="act ghost" id="refill" ${filling || busy ? "disabled" : ""}>
+            ${filling ? "Filling…" : "Re-fill saved answers"}
           </button>
       `;
 
-      if (rememberNote) html += `<p class="hint">${escapeHtml(rememberNote)}</p>`;
       if (fillError) html += `<p class="hint err">${escapeHtml(fillError)}</p>`;
       if (filledMatches.length || unmatchedFields.length) {
         html += `<div class="fillsummary">`;
-        if (filledBankCount || filledLearnedCount) {
-          const parts = [];
-          if (filledBankCount) parts.push(`${filledBankCount} from answer bank`);
-          if (filledLearnedCount) parts.push(`${filledLearnedCount} from saved answers`);
-          html += `<p class="filled-hint">Filled ${parts.join(", ")}.</p>`;
+        if (filledLearnedCount) {
+          html += `<p class="filled-hint">Auto-filled ${filledLearnedCount} saved answer${filledLearnedCount === 1 ? "" : "s"} for this company.</p>`;
         }
         if (unmatchedFields.length) {
-          html += `<div class="unmatched"><div class="q">Needs manual answer (${unmatchedFields.length})</div>`;
+          html += `<div class="unmatched"><div class="q">New questions (type once — saved on Submit) (${unmatchedFields.length})</div>`;
           unmatchedFields.forEach((u) => {
             html += `<div class="ua">${escapeHtml(u.label)}</div>`;
           });
@@ -503,7 +494,7 @@
       if (dead || error === "reload_required") {
         html += `<p class="hint err">Extension reloaded — refresh this page (⌘R).</p>`;
       } else if (error === "not_configured") {
-        html += `<p class="hint">Popup → set API base + token. Dashboard → paste resume.</p>`;
+        html += `<p class="hint">Popup → set API base + token from the dashboard.</p>`;
       } else if (found && stale) {
         html += `<button class="act primary" id="newcycle">Start new application cycle</button>
           <a class="act ghost" href="https://applytrack-rust.vercel.app/dashboard" target="_blank">View previous →</a>`;
@@ -542,8 +533,7 @@
       body.querySelector("#role")?.addEventListener("change", syncManual);
       body.querySelector("#company")?.addEventListener("change", syncManual);
       body.querySelector("#reqId")?.addEventListener("change", syncManual);
-      body.querySelector("#fillbank")?.addEventListener("click", () => fillFromBank());
-      body.querySelector("#remember")?.addEventListener("click", () => rememberAnswers());
+      body.querySelector("#refill")?.addEventListener("click", () => fillFromCompanyMemory());
       body.querySelector("#mark")?.addEventListener("click", () => save("applied"));
       body.querySelector("#save")?.addEventListener("click", () => save("saved"));
       body.querySelector("#newcycle")?.addEventListener("click", () =>
@@ -736,19 +726,6 @@
       true,
     );
 
-    async function rememberAnswers() {
-      remembering = true;
-      rememberNote = null;
-      render();
-      const learned = await learnAnswersFromPage(parsed?.company);
-      remembering = false;
-      rememberNote =
-        learned > 0
-          ? `Saved ${learned} answer${learned === 1 ? "" : "s"} for next time.`
-          : "No new answers to save yet — fill in some questions first.";
-      render();
-    }
-
     async function refreshParsed() {
       let next = typeof parseJobPage === "function" ? parseJobPage() : parsed;
       if (typeof enrichGreenhouseFromApi === "function" && next?.source === "greenhouse") {
@@ -901,11 +878,11 @@
       paintTab();
     }
 
-    async function fillFromBank() {
+    /** Fill only from answers saved for this company (and global fallbacks). No profile bank. */
+    async function fillFromCompanyMemory() {
       filling = true;
       fillError = null;
       filledMatches = [];
-      filledBankCount = 0;
       filledLearnedCount = 0;
       unmatchedFields = [];
       setOpen(true);
@@ -913,46 +890,26 @@
       const questions = scrapeFields();
       if (!questions.length) {
         filling = false;
-        fillError = "No long-form questions found. Open the application form, then try again.";
+        fillError = "No questions found yet — open the application form.";
         render();
         return;
       }
-      const res = await send("FILL_ANSWERS", {
-        questions,
-        company: parsed?.company || "",
-        role: parsed?.role || "",
-        jobDescription: parsed?.jobDescription || "",
-      });
-      if (!res?.ok) {
-        filling = false;
-        fillError = res?.error || "Fill failed";
-        render();
-        return;
-      }
-      const bankMatches = res.answers || [];
-      let remaining = res.unmatched || [];
-      filledBankCount = bankMatches.length;
-      bankMatches.forEach((m) => fillField(m.id, m.answer));
-
-      // Answer bank couldn't match these — try answers the user typed before
-      // (same company first, then any question match) via chrome.storage.local.
-      let learnedMatches = [];
-      if (remaining.length) {
-        const companyKey =
-          typeof companyKeyFromName === "function" ? companyKeyFromName(parsed?.company || "") : "";
-        const learnedRes = await send("LOOKUP_LEARNED", { questions: remaining, companyKey });
-        if (learnedRes?.ok) {
-          learnedMatches = learnedRes.answers || [];
-          const filledIds = new Set(learnedMatches.map((m) => m.id));
-          remaining = remaining.filter((q) => !filledIds.has(q.id));
-          learnedMatches.forEach((m) => fillField(m.id, m.answer));
-        }
-      }
-
+      const companyKey =
+        typeof companyKeyFromName === "function" ? companyKeyFromName(parsed?.company || "") : "";
+      const learnedRes = await send("LOOKUP_LEARNED", { questions, companyKey });
       filling = false;
+      if (!learnedRes?.ok) {
+        fillError = learnedRes?.error || "Could not load saved answers";
+        unmatchedFields = questions;
+        render();
+        return;
+      }
+      const learnedMatches = learnedRes.answers || [];
+      const filledIds = new Set(learnedMatches.map((m) => m.id));
+      learnedMatches.forEach((m) => fillField(m.id, m.answer));
       filledLearnedCount = learnedMatches.length;
-      filledMatches = [...bankMatches, ...learnedMatches];
-      unmatchedFields = remaining;
+      filledMatches = learnedMatches;
+      unmatchedFields = questions.filter((q) => !filledIds.has(q.id) && !q.currentValue);
       render();
     }
 
@@ -974,10 +931,10 @@
     paintTab();
     void refresh(false);
 
-    // Auto-fill from bank + learned answers when an application form is open.
+    // Auto-fill from this company's saved answers when the application form opens.
     let autoFilledOnce = false;
     async function maybeAutoFillLearned() {
-      if (autoFilledOnce || found) return;
+      if (autoFilledOnce) return;
       const onAppForm =
         /\/application\b|\/apply\b|oneclick|manualapplication|applicantflow/i.test(location.href) ||
         document.querySelectorAll("textarea").length >= 1;
@@ -986,9 +943,9 @@
       const empty = questions.filter((q) => !q.currentValue);
       if (empty.length < 1) return;
       autoFilledOnce = true;
-      await fillFromBank();
+      await fillFromCompanyMemory();
       if (filledMatches.length) {
-        autoNote = `Auto-filled ${filledMatches.length} saved answer${filledMatches.length === 1 ? "" : "s"}.`;
+        autoNote = `Auto-filled ${filledMatches.length} answer${filledMatches.length === 1 ? "" : "s"} from your past ${parsed?.company || "company"} applications.`;
         setOpen(true);
         render();
       }

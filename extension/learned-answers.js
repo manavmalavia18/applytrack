@@ -99,14 +99,20 @@ function mergeLearnedAnswers(store, opts) {
   return { store: { byQuestion, byCompany }, learnedCount };
 }
 
+/** Word overlap score 0–1 for fuzzy match within the same company. */
+function questionSimilarity(a, b) {
+  const wa = new Set(String(a || "").split(" ").filter((w) => w.length > 2));
+  const wb = new Set(String(b || "").split(" ").filter((w) => w.length > 2));
+  if (!wa.size || !wb.size) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter += 1;
+  return inter / Math.max(wa.size, wb.size);
+}
+
 /**
- * Look up learned answers for currently-unmatched questions.
- * Exact normalized-question match only (no fuzzy/keyword matching) — company
- * scope wins over global so e.g. "Why MintMCP?" stays company-specific while
- * "Work authorization" is reused everywhere.
- * @param {{byQuestion?: object, byCompany?: object}} store
- * @param {{questions: {id: string, label: string}[], companyKey?: string}} opts
- * @returns {{id: string, label: string, answer: string, source: "learned", scope: "company"|"global"}[]}
+ * Look up learned answers. Prefer same-company exact match, then fuzzy within
+ * that company (so "Why Cogent?" ≈ "Why do you want to join Cogent?"), then
+ * global exact match for universal questions (work auth, etc.).
  */
 function lookupLearnedAnswers(store, opts) {
   const byQuestion = store?.byQuestion || {};
@@ -119,11 +125,31 @@ function lookupLearnedAnswers(store, opts) {
   for (const q of questions) {
     const nq = normalizeQuestion(q?.label);
     if (!nq) continue;
-    const companyHit = companyMap?.[nq];
-    if (companyHit?.answer) {
-      matches.push({ id: q.id, label: q.label, answer: companyHit.answer, source: "learned", scope: "company" });
+
+    if (companyMap?.[nq]?.answer) {
+      matches.push({ id: q.id, label: q.label, answer: companyMap[nq].answer, source: "learned", scope: "company" });
       continue;
     }
+
+    // Fuzzy within same company — pick best overlap ≥ 0.45
+    if (companyMap) {
+      let best = null;
+      let bestScore = 0;
+      for (const [key, hit] of Object.entries(companyMap)) {
+        if (!hit?.answer) continue;
+        let score = questionSimilarity(nq, key);
+        if (nq.includes(key) || key.includes(nq)) score = Math.max(score, 0.7);
+        if (score > bestScore) {
+          bestScore = score;
+          best = hit;
+        }
+      }
+      if (best && bestScore >= 0.45) {
+        matches.push({ id: q.id, label: q.label, answer: best.answer, source: "learned", scope: "company" });
+        continue;
+      }
+    }
+
     const globalHit = byQuestion[nq];
     if (globalHit?.answer) {
       matches.push({ id: q.id, label: q.label, answer: globalHit.answer, source: "learned", scope: "global" });
