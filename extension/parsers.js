@@ -2672,6 +2672,7 @@ function parsePaylocity() {
 function parseSuccessFactors() {
   const params = new URLSearchParams(location.search);
   const bodyText = (document.body?.innerText || "").slice(0, 8000);
+  const SRC = "successfactors";
 
   function fromInputs() {
     const names = [
@@ -2683,6 +2684,7 @@ function parseSuccessFactors() {
       "job_req_id",
       "JobReqId",
       "rqn",
+      "career_job_req_id",
     ];
     for (const name of names) {
       try {
@@ -2701,6 +2703,7 @@ function parseSuccessFactors() {
   const jobId =
     params.get("jobId") ||
     params.get("jobReqId") ||
+    params.get("career_job_req_id") ||
     params.get("reqId") ||
     params.get("requisitionId") ||
     params.get("job_req_id") ||
@@ -2717,56 +2720,127 @@ function parseSuccessFactors() {
     "";
 
   const bad =
-    /^(career opportunities|thank you|recruiting team|why work|job opportunities|connect with us|home|sign in|log in|apply|submit|internal server error)\b/i;
+    /^(career opportunities|thank you|recruiting team|why work|job opportunities|connect with us|home|sign in|log in|apply|submit|internal server error|quick links?|my applications?|cookie|accept all)\b/i;
 
-  function pick(...cands) {
+  function titleCaseSlug(slug) {
+    return (slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  function pickRole(...cands) {
     for (const raw of cands) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
-      if (!t || t.length < 5 || bad.test(t)) continue;
+      let t = (raw || "").trim().replace(/\s+/g, " ");
+      if (!t || t.length < 3 || t.length > 180) continue;
+      // Scrub wizard prefixes ("Let's begin! …") before weak/chrome checks
+      t = typeof scrubRole === "function" ? scrubRole(t, SRC) : t;
+      if (!t || t.length < 3) continue;
+      if (bad.test(t)) continue;
+      if (typeof isWeakRole === "function" && isWeakRole(t, SRC)) continue;
       return t;
     }
     return "";
   }
 
-  let role = pick(
+  function acceptCompany(raw) {
+    let c = (raw || "").trim().replace(/\s+/g, " ");
+    if (!c || c.length < 2 || c.length > 80) return "";
+    if (/logo|image|banner/i.test(c)) return "";
+    c = typeof scrubCompany === "function" ? scrubCompany(c, SRC) : c;
+    if (!c) return "";
+    if (typeof isWeakCompany === "function" && isWeakCompany(c, SRC)) return "";
+    return c;
+  }
+
+  // Prefer JobPosting JSON-LD when SF / career sites emit it
+  const ld =
+    typeof parseJobPostingJsonLd === "function" ? parseJobPostingJsonLd() : { title: "", company: "" };
+
+  // URL slug: /job/forward-deployed-ai-engineer/… or path segments with hyphens
+  let fromSlug = "";
+  const slugMatch =
+    location.pathname.match(/\/job\/([^/]+)/i) ||
+    location.pathname.match(/\/jobs\/([^/]+)/i) ||
+    location.pathname.match(/\/([a-z][a-z0-9]+(?:-[a-z0-9]+){1,})\//i);
+  if (slugMatch?.[1] && !/^\d+$/.test(slugMatch[1])) {
+    fromSlug = titleCaseSlug(decodeURIComponent(slugMatch[1]));
+  }
+
+  let role = pickRole(
+    ld.title,
+    textOf(document.querySelector(".jobTitle, [class*='jobTitle'], [class*='JobTitle']")),
+    textOf(document.querySelector("[data-automation-id='jobTitle'], [data-ui='job-title']")),
     textOf(document.querySelector("h1")),
     textOf(document.querySelector("h2")),
-    textOf(document.querySelector(".jobTitle, [class*='jobTitle'], [class*='JobTitle']")),
-    document.title.split("|")[0].split(":")[0],
+    document.title.split("|")[0].split(":")[0].split(" - ")[0],
+    fromSlug,
   );
   role = role
     .replace(/^career opportunities\s*[:\-–]\s*/i, "")
     .replace(/\s*\(\d{4,}\)\s*$/, "")
     .trim();
+  if (typeof scrubRole === "function") role = scrubRole(role, SRC) || role;
+  if (typeof isWeakRole === "function" && isWeakRole(role, SRC)) role = "";
 
-  let company =
-    textOf(document.querySelector("header img[alt], .logo img[alt], img[alt*='logo' i]")) ||
-    textOf(document.querySelector("[class*='company'], .company-name"));
-  if (!company || /logo|image|banner/i.test(company) || company.length > 80) {
-    company = "";
+  // Employer signals — never hostname "SuccessFactors"
+  let company = "";
+  company = acceptCompany(ld.company);
+  if (!company) {
+    company = acceptCompany(
+      textOf(document.querySelector("header img[alt], .logo img[alt], img[alt*='logo' i]")),
+    );
   }
   if (!company) {
-    if (/\bPACCAR\b/i.test(bodyText) || /paccar/i.test(location.hostname)) company = "PACCAR";
+    company = acceptCompany(textOf(document.querySelector("[class*='company'], .company-name")));
   }
   if (!company) {
-    company =
-      location.hostname
-        .replace(/^career\d*\./i, "")
-        .replace(/\.successfactors\.(com|eu)$/i, "")
-        .split(".")[0] || "SuccessFactors";
-    company = company.replace(/\b\w/g, (c) => c.toUpperCase());
+    const og = document
+      .querySelector('meta[property="og:site_name"]')
+      ?.getAttribute("content")
+      ?.trim();
+    company = acceptCompany(og);
   }
+  // SF career sites almost always expose ?company=SAP / ?company=PaccarInc
+  if (!company) {
+    const fromParam = params.get("company") || params.get("companyId") || params.get("companyName");
+    if (fromParam && !/^(successfactors|sf)$/i.test(fromParam)) {
+      company = acceptCompany(titleCaseSlug(fromParam));
+    }
+  }
+  if (!company) {
+    if (/\bPACCAR\b/i.test(bodyText) || /paccar/i.test(location.hostname)) {
+      company = acceptCompany("PACCAR");
+    }
+  }
+  if (!company) {
+    // Subdomain brand only when it is not careerN / successfactors itself
+    // e.g. jobs.sap.successfactors.com → sap → SAP
+    const hostBit = location.hostname
+      .replace(/^career\d*\./i, "")
+      .replace(/^jobs?\./i, "")
+      .replace(/^www\./i, "")
+      .replace(/\.successfactors\.(com|eu)$/i, "")
+      .split(".")
+      .filter(Boolean)
+      .pop();
+    if (hostBit && !/^(successfactors|career\d*|jobs?|www)$/i.test(hostBit)) {
+      company = acceptCompany(titleCaseSlug(hostBit));
+    }
+  }
+  // Never invent "SuccessFactors" as the employer
 
   // Carry job id / title across SF wizard steps (URL loses req id)
   return mergeRememberedJob(
     {
-      company,
+      company: company || "Unknown",
       role: role || "Unknown role",
       url: location.href.split("#")[0],
       jobKey: jobId ? `successfactors:${jobId}` : null,
-      source: "successfactors",
+      source: SRC,
     },
-    "successfactors",
+    SRC,
   );
 }
 

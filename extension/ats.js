@@ -465,6 +465,82 @@ const ApplyTrackATS = {
     },
   },
 
+  /**
+   * SAP SuccessFactors — career*.successfactors.(com|eu)
+   * Wizard/nav chrome ("Quick links", "Let's begin!") often lands in <h1>;
+   * hostname fallback becomes "SuccessFactors" — never lock either as identity.
+   */
+  successfactors: {
+    scrubRole(t) {
+      let s = (t || "").trim().replace(/\s+/g, " ");
+      // Apply-wizard greetings glued onto the real title
+      s = s
+        .replace(/^let'?s\s+begin[!?.]*\s*/i, "")
+        .replace(/^welcome[!?.]*\s*/i, "")
+        .replace(/^get\s+started[!?.]*\s*/i, "")
+        .replace(/^start\s+(your\s+)?application[!?.]*\s*/i, "")
+        .trim();
+      // Trailing req id already stripped by parser; keep scrub defensive
+      s = s.replace(/\s*\(\d{4,}\)\s*$/, "").trim();
+      return s;
+    },
+    scrubCompany(t) {
+      let c = (t || "").trim().replace(/\s+/g, " ");
+      // Vendor / product chrome — drop entirely
+      if (
+        /^(sap\s+)?success\s*factors$/i.test(c) ||
+        /^successfactors$/i.test(c.replace(/\s/g, "")) ||
+        /^sap\s+successfactors(\s+cloud)?$/i.test(c)
+      ) {
+        return "";
+      }
+      c = c
+        .replace(/\s+logo$/i, "")
+        .replace(/^logo\s+(of\s+)?/i, "")
+        .replace(/\s*[-–—|]\s*(home|logo|careers?|jobs?|recruiting)\s*$/i, "")
+        .replace(/\s+(careers?|jobs?|recruiting)\s*$/i, "")
+        .trim();
+      const compact = c.replace(/\s/g, "");
+      if (/^paccar$/i.test(compact)) return "PACCAR";
+      if (/^sap$/i.test(compact)) return "SAP";
+      return c;
+    },
+    isWeakRole(t) {
+      const s = (t || "").trim();
+      if (!s) return true;
+      // Nav / wizard / cookie chrome — never a job title
+      if (
+        /^(quick\s*links?|let'?s\s+begin[!?.]*|my\s+applications?|my\s+profile|job\s+search|search\s+jobs|career\s+opportunities|cookie|cookies?|accept\s+all|this\s+website\s+uses\s+cookies|privacy\s+(notice|policy|preference)|sign\s+in|log\s+in|home|careers?|jobs?|apply|submit|next|back|review|welcome[!?.]*|get\s+started[!?.]*|start\s+(your\s+)?application|application\s+form|candidate\s+profile|recruiting\s+team|why\s+work|connect\s+with\s+us|internal\s+server\s+error)$/i.test(
+          s,
+        )
+      ) {
+        return true;
+      }
+      // Prefix-only chrome with nothing useful after scrub
+      if (/^let'?s\s+begin[!?.]*$/i.test(s) || /^welcome[!?.]*$/i.test(s)) return true;
+      return false;
+    },
+    isWeakCompany(t) {
+      const s = (t || "").trim();
+      if (!s) return true;
+      const compact = s.replace(/\s/g, "");
+      // Never the ATS product / host labels
+      if (
+        /^(sap\s+)?success\s*factors$/i.test(s) ||
+        /^successfactors$/i.test(compact) ||
+        /^sap\s+successfactors(\s+cloud)?$/i.test(s)
+      ) {
+        return true;
+      }
+      if (
+        /^(career\d*|jobs?|careers?|www|home|login|portal|recruiting)$/i.test(s)
+      ) {
+        return true;
+      }
+      return false;
+    },
+  },
+
   // Other sources inherit shared base rules only — add keys when needed.
 };
 
@@ -552,6 +628,7 @@ const ATS_WIZARD_URL_PATTERNS = {
   workable: /\/apply\b|\/candidates\b/i,
   oracle: /\/apply\b|applicantflow|\/my-profile\b|\/myapplications\b/i,
   paycom: /\/apply\b/i,
+  successfactors: /\/apply\b|jobapplication|rcmcandidate|\/xi\/ui\/rcmapi/i,
 };
 
 const THANK_YOU_TEXT_RE =

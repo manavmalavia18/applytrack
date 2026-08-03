@@ -105,6 +105,7 @@ export function normalizeJobUrl(raw: string): string {
       const id =
         url.searchParams.get("jobId") ||
         url.searchParams.get("jobReqId") ||
+        url.searchParams.get("career_job_req_id") ||
         url.searchParams.get("reqId") ||
         url.searchParams.get("requisitionId") ||
         url.pathname.match(/\/job\/(\d+)/)?.[1];
