@@ -104,9 +104,13 @@ function questionSimilarity(a, b) {
   const wa = new Set(String(a || "").split(" ").filter((w) => w.length > 2));
   const wb = new Set(String(b || "").split(" ").filter((w) => w.length > 2));
   if (!wa.size || !wb.size) return 0;
+  const [small, large] = wa.size <= wb.size ? [wa, wb] : [wb, wa];
   let inter = 0;
-  for (const w of wa) if (wb.has(w)) inter += 1;
-  return inter / Math.max(wa.size, wb.size);
+  for (const w of small) if (large.has(w)) inter += 1;
+  // Prefer "all significant words of the shorter question appear in the longer"
+  const coverage = inter / small.size;
+  const jaccard = inter / (wa.size + wb.size - inter);
+  return Math.max(coverage, jaccard);
 }
 
 /**
@@ -144,7 +148,7 @@ function lookupLearnedAnswers(store, opts) {
           best = hit;
         }
       }
-      if (best && bestScore >= 0.45) {
+      if (best && bestScore >= 0.4) {
         matches.push({ id: q.id, label: q.label, answer: best.answer, source: "learned", scope: "company" });
         continue;
       }
