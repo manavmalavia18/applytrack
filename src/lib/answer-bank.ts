@@ -170,7 +170,8 @@ const MATCH_RULES: { key: AnswerBankKey; pattern: RegExp }[] = [
   },
   {
     key: "proudWork",
-    pattern: /(proud|accomplishment|project\s*you.?re\s*proud|greatest\s*achievement|proudest|something\s*you\s*built|biggest\s*challenge)/i,
+    pattern:
+      /(proud|accomplishment|project\s*you.?re\s*proud|greatest\s*achievement|proudest|something\s*you\s*built|biggest\s*challenge|not\s*on\s*(your\s*)?resume|isn.?t\s*on\s*(your\s*)?resume)/i,
   },
   {
     key: "whyLooking",

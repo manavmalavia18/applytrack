@@ -47,10 +47,17 @@ export function extractResumeFacts(resumeText: string): ResumeFacts {
     lines.find((l) => /software engineer|full[- ]?stack|backend|platform engineer/i.test(l))?.slice(0, 80) ||
     "software engineer";
 
+  // Prefer named side projects (not job bullets) — "proud of" questions often ask for off-resume work.
   const projectHint =
-    lines.find((l) => /debugpilot|built|proud|project/i.test(l) && l.length > 40)?.slice(0, 220) ||
-    lines.find((l) => /^[-•*]/.test(l) && l.length > 50)?.replace(/^[-•*]\s*/, "").slice(0, 220) ||
-    "shipping production software end-to-end";
+    (() => {
+      const named = text.match(
+        /\b(DebugPilot|[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,2})\b[^.\n]{0,40}\b(built|created|launched|side project|personal project)/i,
+      );
+      if (named) return named[0].replace(/\s+/g, " ").slice(0, 200);
+      const dbg = lines.find((l) => /debugpilot/i.test(l));
+      if (dbg) return dbg.replace(/^[-•*]\s*/, "").slice(0, 200);
+      return "";
+    })();
 
   return {
     skills: skillsLine.replace(/^(languages|skills|technical skills|frameworks)\s*:?\s*/i, "").slice(0, 220),
@@ -99,7 +106,10 @@ export function buildAnswerBankFromResume(resumeText: string, extras: ParseExtra
     whyRole: `I'm applying because this [Role] role matches the work I want to keep growing in: building reliable software, solving practical problems, and supporting production systems. My experience has prepared me to take ownership, move quickly, and contribute across the stack.`,
     whyLooking:
       "I'm currently employed, but I'm exploring long-term opportunities with more ownership, growth, and larger-scale software work.",
-    proudWork: `One thing I'm proud of: ${facts.projectHint}`,
+    // Keep this off-resume oriented; never paste a truncated job bullet.
+    proudWork: facts.projectHint
+      ? `Outside of what's listed as day-to-day job bullets, I'm proud of ${facts.projectHint.replace(/^one thing i'm proud of:\s*/i, "")}. I owned the hard parts end-to-end and learned a lot shipping it.`
+      : `Outside of my resume bullets, I'm proud of mentoring and teaching applied AI/ML concepts — breaking down RAG, evaluation, and practical LLM workflows so others could actually build with them. That kind of clarity under pressure is something I care about as an engineer too.`,
     aiExperience: /ai|llm|rag|langchain|openai|claude|machine learning|nlp/i.test(resumeText)
       ? `I have hands-on AI/ML experience from my resume work — including RAG/LLM workflows and related tooling where listed. I'm comfortable applying those skills to practical product problems.`
       : `I've worked with modern AI tooling in engineering workflows and am comfortable learning and applying LLM/RAG patterns when a role calls for it.`,
