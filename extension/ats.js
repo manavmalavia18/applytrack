@@ -119,12 +119,15 @@ const ApplyTrackATS = {
       return false;
     },
     isWeakCompany(t) {
-      // Never use SaaS tenant host / Oracle product as company
+      const s = (t || "").trim();
+      // Never use SaaS tenant host / Oracle product / opaque tenant codes (hcgn, eluq, …)
       return (
-        /^fa[-_]/i.test(t) ||
-        /saasfaprod/i.test(t) ||
-        /oraclecloud/i.test(t) ||
-        /^oracle(\s+cloud)?(\s+hcm)?(\s+career)?$/i.test(t)
+        /^fa[-_]/i.test(s) ||
+        /saasfaprod/i.test(s) ||
+        /oraclecloud/i.test(s) ||
+        /^oracle(\s+cloud)?(\s+hcm)?(\s+career)?$/i.test(s) ||
+        /^[a-z]{2,6}$/i.test(s) || // bare tenant labels like hcgn / eluq
+        /^(my\s*)?profile|candidate\s*experience|my\s*applications$/i.test(s)
       );
     },
   },
@@ -547,7 +550,7 @@ const ATS_WIZARD_URL_PATTERNS = {
   pinpoint: /\/applications\/new/i,
   teamtailor: /\/applications?\b/i,
   workable: /\/apply\b|\/candidates\b/i,
-  oracle: /\/apply\b|applicantflow/i,
+  oracle: /\/apply\b|applicantflow|\/my-profile\b|\/myapplications\b/i,
   paycom: /\/apply\b/i,
 };
 

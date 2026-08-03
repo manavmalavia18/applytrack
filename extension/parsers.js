@@ -3378,17 +3378,24 @@ function parseOracleCloud() {
     }
   }
 
-  // Never use fa-*-saasfaprod1 / oraclecloud tenant hostname as the company
-  if (!company) {
-    const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ");
-    if (/^jpmc$/i.test(sub.trim())) company = "JPMorgan Chase";
+  // Never use fa-*-saasfaprod1 / oraclecloud tenant hostname as the company.
+  // Opaque codes like hcgn / eluq must NOT become "Hcgn".
+  const onProfileOrPortal =
+    /\/my-profile\b|\/candidateexperience\/[^/]+\/?$/i.test(location.pathname) &&
+    !/\/job\/\d+/i.test(location.pathname);
+  if (!company && !onProfileOrPortal) {
+    const sub = (location.hostname.split(".")[0] || "").replace(/[-_]/g, " ").trim();
+    if (/^jpmc$/i.test(sub)) company = "JPMorgan Chase";
     else if (
+      sub.length >= 7 &&
       looksLikeCompany(sub) &&
+      !isWeakCompany(sub, "oracle") &&
       !/saasfa|exvu|prod\d|oraclecloud|^fa\b/i.test(sub)
     ) {
       company = scrubCo(sub.replace(/\b\w/g, (c) => c.toUpperCase()));
     }
   }
+  if (company && isWeakCompany(company, "oracle")) company = "";
 
   // Prefer real job titles; reject brand/company strings even if they appear first in DOM
   let role = pickRole(roleCandidates, company);
