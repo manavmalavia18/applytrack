@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { users } from "@/db/schema";
+import { formatDraftAiError, getDraftModel } from "@/lib/ai";
 import { requireUser } from "@/lib/auth";
 
 const questionSchema = z.object({
@@ -48,8 +49,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const { model, modelId } = getDraftModel();
+
     const { output } = await generateText({
-      model: "openai/gpt-4o-mini",
+      model,
       output: Output.object({ schema: draftSchema }),
       prompt: `You help a job applicant draft short, honest answers for an online application form.
 
@@ -75,10 +78,9 @@ Rules:
 
     return NextResponse.json({
       answers: output?.answers || [],
-      model: "openai/gpt-4o-mini",
+      model: modelId,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Draft failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: formatDraftAiError(err) }, { status: 500 });
   }
 }
