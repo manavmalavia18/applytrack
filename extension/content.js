@@ -6,6 +6,168 @@
   let uiStarted = false;
   let autoStarted = false;
 
+  const DRAFT_STORAGE_KEY = "applytrack:answerDraft";
+
+  /** Live-scrape filled text answers (Ashby-friendly). Used for draft buffer + learn. */
+  function scrapeAnswerEntries() {
+    const nodes = [
+      ...document.querySelectorAll("textarea"),
+      ...document.querySelectorAll('input[type="text"]'),
+      ...document.querySelectorAll('input[type="email"]'),
+      ...document.querySelectorAll("input:not([type])"),
+      ...document.querySelectorAll("[contenteditable='true']"),
+      ...document.querySelectorAll("[role='textbox']"),
+    ];
+    const entries = [];
+    let idx = 0;
+    for (const input of nodes) {
+      if (!(input instanceof HTMLElement)) continue;
+      if (input.disabled || input.readOnly) continue;
+      if (input.type === "password" || input.type === "hidden") continue;
+      // Don't require visible — Ashby may detach nodes mid-submit; still try .value
+      const value = input.isContentEditable
+        ? (input.innerText || input.textContent || "").trim()
+        : String(input.value || "").trim();
+      if (!value || value.length < 2) continue;
+      if (typeof shouldLearnValue === "function" && !shouldLearnValue(value)) continue;
+
+      let label = "";
+      if (input.id) {
+        try {
+          const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+          label = (byFor?.innerText || "").trim().replace(/\s+/g, " ");
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!label) {
+        const block = input.closest(
+          "[class*='question'], [class*='Question'], [class*='Field'], [class*='field'], [class*='ashby'], fieldset, label, li, section, form > div, form div",
+        );
+        if (block) {
+          const clone = block.cloneNode(true);
+          clone.querySelectorAll("textarea, input, button, select, [contenteditable]").forEach((n) => n.remove());
+          label = (clone.innerText || "").trim().replace(/\s+/g, " ");
+        }
+      }
+      if (!label) {
+        let prev = input.previousElementSibling;
+        for (let i = 0; i < 5 && prev; i++, prev = prev.previousElementSibling) {
+          const t = (prev.innerText || "").trim().replace(/\s+/g, " ");
+          if (t.length >= 6 && t.length < 300) {
+            label = t;
+            break;
+          }
+        }
+      }
+      if (!label) label = (input.getAttribute("aria-label") || input.getAttribute("placeholder") || "").trim();
+      if (/^cards?\s*\[/i.test(label) || /\[[0-9a-f-]{8,}\]/i.test(label)) label = "";
+      if (label) {
+        label = label.split(/\n/)[0].slice(0, 240);
+        if (value.length > 20 && label.includes(value.slice(0, 20))) {
+          label = label.slice(0, label.indexOf(value.slice(0, 20))).trim();
+        }
+      }
+      if (!label || label.length < 4) label = `question_${idx + 1}`;
+      // Skip Type here placeholders used as labels
+      if (/^type here/i.test(label)) label = `question_${idx + 1}`;
+      entries.push({ label, value });
+      idx += 1;
+    }
+    return entries;
+  }
+
+  function readDraftBuffer() {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeDraftBuffer(company, entries) {
+    if (!entries?.length) return;
+    try {
+      const prev = readDraftBuffer() || { entries: [] };
+      const byQ = new Map();
+      for (const e of prev.entries || []) {
+        if (e?.label && e?.value) byQ.set(String(e.label).toLowerCase(), e);
+      }
+      for (const e of entries) {
+        if (e?.label && e?.value) byQ.set(String(e.label).toLowerCase(), e);
+      }
+      const companyKey =
+        typeof companyKeyFromName === "function" ? companyKeyFromName(company || "") : "";
+      sessionStorage.setItem(
+        DRAFT_STORAGE_KEY,
+        JSON.stringify({
+          company: company || prev.company || "",
+          companyKey: companyKey || prev.companyKey || "",
+          entries: [...byQ.values()],
+          updatedAt: Date.now(),
+        }),
+      );
+    } catch {
+      /* ignore quota */
+    }
+  }
+
+  function bufferAnswersFromPage(companyHint) {
+    let company = companyHint || "";
+    try {
+      if (!company && typeof readJobCtx === "function") {
+        company = readJobCtx("applytrack:job:latest")?.company || "";
+      }
+    } catch {
+      /* ignore */
+    }
+    const entries = scrapeAnswerEntries();
+    if (entries.length) writeDraftBuffer(company, entries);
+    return entries;
+  }
+
+  async function flushDraftToLearned(extraEntries, companyHint) {
+    if (typeof mergeLearnedAnswers !== "function" || !chrome?.runtime?.id) return 0;
+    const live = Array.isArray(extraEntries) ? extraEntries : scrapeAnswerEntries();
+    const draft = readDraftBuffer();
+    const merged = new Map();
+    for (const e of draft?.entries || []) {
+      if (e?.label && e?.value) merged.set(String(e.label).toLowerCase(), e);
+    }
+    for (const e of live) {
+      if (e?.label && e?.value) merged.set(String(e.label).toLowerCase(), e);
+    }
+    const entries = [...merged.values()];
+    if (!entries.length) return 0;
+
+    let company = companyHint || draft?.company || "";
+    try {
+      if (!company && typeof readJobCtx === "function") {
+        company = readJobCtx("applytrack:job:latest")?.company || "";
+      }
+    } catch {
+      /* ignore */
+    }
+    const companyKey =
+      (typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "") ||
+      draft?.companyKey ||
+      "";
+
+    const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+    const { store, learnedCount } = mergeLearnedAnswers(
+      {
+        byQuestion: learnedAnswers?.byQuestion || {},
+        byCompany: learnedAnswers?.byCompany || {},
+      },
+      { companyKey, entries },
+    );
+    await chrome.storage.local.set({ learnedAnswers: store });
+    console.info("[ApplyTrack] flushed", learnedCount, "answers for", companyKey || "(global)");
+    return learnedCount;
+  }
+
   function supported() {
     try {
       return typeof isSupportedJobPage === "function" && isSupportedJobPage();
@@ -701,30 +863,28 @@
 
     async function learnAnswersFromPage(companyName) {
       try {
-        const fields = scrapeFields();
-        const entries = fields
-          .filter((f) => f.currentValue && f.currentValue.trim())
-          .map((f) => ({ label: f.label, value: f.currentValue.trim() }));
-        if (!entries.length) return 0;
-        return await persistLearnedEntries(entries, companyName || parsed?.company);
+        const entries = bufferAnswersFromPage(companyName || parsed?.company);
+        if (!entries.length) {
+          // Still try flush of any prior draft buffer
+          return await flushDraftToLearned([], companyName || parsed?.company);
+        }
+        return await flushDraftToLearned(entries, companyName || parsed?.company);
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersFromPage failed", err);
         return 0;
       }
     }
 
-    // Keep learning while the user types so Submit doesn't have to win a race.
+    // Buffer answers as the user types (sessionStorage) so Submit/thank-you still works.
     let learnDebounce = null;
-    document.addEventListener(
-      "change",
-      () => {
-        if (learnDebounce) clearTimeout(learnDebounce);
-        learnDebounce = setTimeout(() => {
-          void learnAnswersFromPage(parsed?.company);
-        }, 800);
-      },
-      true,
-    );
+    const scheduleBuffer = () => {
+      if (learnDebounce) clearTimeout(learnDebounce);
+      learnDebounce = setTimeout(() => {
+        bufferAnswersFromPage(parsed?.company);
+      }, 400);
+    };
+    document.addEventListener("input", scheduleBuffer, true);
+    document.addEventListener("change", scheduleBuffer, true);
 
     async function refreshParsed() {
       let next = typeof parseJobPage === "function" ? parseJobPage() : parsed;
@@ -1388,93 +1548,52 @@
     );
 
     let lastLearnAt = 0;
-    /** Scrape filled answers and persist to chrome.storage.local (no LLM). */
+    /** Buffer live fields + flush draft → chrome.storage.local (survives Ashby thank-you wipe). */
     async function learnAnswersOnSubmit() {
       const now = Date.now();
-      if (now - lastLearnAt < 1500) return;
+      if (now - lastLearnAt < 800) return;
       lastLearnAt = now;
       try {
-        if (!chrome?.runtime?.id || typeof mergeLearnedAnswers !== "function") return;
-        const nodes = [
-          ...document.querySelectorAll("textarea"),
-          ...document.querySelectorAll('input[type="text"]'),
-          ...document.querySelectorAll("input:not([type])"),
-          ...document.querySelectorAll("[contenteditable='true']"),
-        ];
-        const entries = [];
-        for (const input of nodes) {
-          if (!(input instanceof HTMLElement)) continue;
-          if (input.disabled || input.type === "password") continue;
-          const st = getComputedStyle(input);
-          if (st.display === "none" || st.visibility === "hidden") continue;
-          const value = input.isContentEditable
-            ? (input.innerText || "").trim()
-            : String(input.value || "").trim();
-          if (!value) continue;
-          if (typeof shouldLearnValue === "function" && !shouldLearnValue(value)) continue;
-
-          let label = "";
-          if (input.id) {
-            try {
-              const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-              label = (byFor?.innerText || "").trim().replace(/\s+/g, " ");
-            } catch {
-              /* ignore */
-            }
-          }
-          if (!label) {
-            const block = input.closest(
-              "[class*='question'], [class*='Question'], [class*='ashby'], fieldset, .form-group, label, li, section, div",
-            );
-            const heading = block?.querySelector(
-              "label, h3, h4, legend, p, span, [class*='label'], [class*='Label']",
-            );
-            label = (heading?.innerText || "").trim().replace(/\s+/g, " ");
-          }
-          if (!label || label.length < 6) continue;
-          if (/^cards?\s*\[/i.test(label) || /\[[0-9a-f-]{8,}\]/i.test(label)) continue;
-          label = label.split(/\n/)[0].slice(0, 240);
-          // Drop label text that accidentally includes the answer
-          if (value.length > 20 && label.includes(value.slice(0, 20))) {
-            label = label.slice(0, label.indexOf(value.slice(0, 20))).trim();
-          }
-          if (label.length < 6) continue;
-          entries.push({ label, value });
-        }
-        if (!entries.length) {
-          console.warn("[ApplyTrack] submit learn: no filled fields found");
-          return;
-        }
-
         let company = "";
         try {
           if (typeof readJobCtx === "function") {
-            const latest = readJobCtx("applytrack:job:latest");
-            if (latest?.company) company = latest.company;
+            company = readJobCtx("applytrack:job:latest")?.company || "";
           }
         } catch {
           /* ignore */
         }
-        if (!company) {
-          const p = currentParsed();
-          company = p?.company || "";
+        if (!company) company = currentParsed()?.company || "";
+        bufferAnswersFromPage(company);
+        const n = await flushDraftToLearned(null, company);
+        if (!n) {
+          // Silent on thank-you pages; only note when we expected fields.
+          if (!/thank|submitted|success/i.test(document.body?.innerText?.slice(0, 500) || "")) {
+            console.warn("[ApplyTrack] submit learn: no draft answers buffered yet");
+          }
         }
-        const companyKey =
-          typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
-        const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
-        const { store, learnedCount } = mergeLearnedAnswers(
-          {
-            byQuestion: learnedAnswers?.byQuestion || {},
-            byCompany: learnedAnswers?.byCompany || {},
-          },
-          { companyKey, entries },
-        );
-        await chrome.storage.local.set({ learnedAnswers: store });
-        console.info("[ApplyTrack] learned", learnedCount, "answers for", companyKey || "(global)");
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
       }
     }
+
+    // Keep buffering while typing (all frames that have the form).
+    let autoBufferTimer = null;
+    document.addEventListener(
+      "input",
+      () => {
+        if (autoBufferTimer) clearTimeout(autoBufferTimer);
+        autoBufferTimer = setTimeout(() => {
+          let company = "";
+          try {
+            company = typeof readJobCtx === "function" ? readJobCtx("applytrack:job:latest")?.company || "" : "";
+          } catch {
+            /* ignore */
+          }
+          bufferAnswersFromPage(company);
+        }, 300);
+      },
+      true,
+    );
 
     // Confirmation page (e.g. landed here after Simplify submit / Workable thank-you)
     async function checkThankYou() {
