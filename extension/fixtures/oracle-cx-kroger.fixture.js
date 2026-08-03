@@ -14,7 +14,7 @@ module.exports = {
 </body>
 </html>`,
   expected: {
-    company: "Kroger",
+    company: "The Kroger Co.",
     role: "Senior Infrastructure Engineer",
     source: "oracle",
     jobKey: "oracle:128371",
