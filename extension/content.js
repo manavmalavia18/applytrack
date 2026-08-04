@@ -91,12 +91,12 @@
     if (!entries?.length) return;
     try {
       const prev = readDraftBuffer() || { entries: [] };
-      const byQ = new Map();
-      for (const e of prev.entries || []) {
-        if (e?.label && e?.value) byQ.set(String(e.label).toLowerCase(), e);
+      const byQ = Object.create(null);
+      for (const e of Array.isArray(prev.entries) ? prev.entries : []) {
+        if (e?.label && e?.value) byQ[String(e.label).toLowerCase()] = e;
       }
       for (const e of entries) {
-        if (e?.label && e?.value) byQ.set(String(e.label).toLowerCase(), e);
+        if (e?.label && e?.value) byQ[String(e.label).toLowerCase()] = e;
       }
       const companyKey =
         typeof companyKeyFromName === "function" ? companyKeyFromName(company || "") : "";
@@ -105,7 +105,7 @@
         JSON.stringify({
           company: company || prev.company || "",
           companyKey: companyKey || prev.companyKey || "",
-          entries: [...byQ.values()],
+          entries: Object.values(byQ),
           updatedAt: Date.now(),
         }),
       );
@@ -128,18 +128,58 @@
     return entries;
   }
 
+  /** Login / SSO / auth wizards — never learn or warn here. */
+  function looksLikeAuthPage() {
+    try {
+      const path = location.pathname.toLowerCase();
+      const href = location.href.toLowerCase();
+      if (
+        /\/(login|log-in|signin|sign-in|signup|sign-up|register|auth|sso|oauth|create-?account|forgot-?password|reset-?password)(\/|$|\?)/i.test(
+          path,
+        )
+      ) {
+        return true;
+      }
+      if (/[?&](login|signin|sign_in|auth)=/i.test(href)) return true;
+      // Password form with no long-answer fields = credentials step, not application Q&A
+      const hasPassword = Boolean(document.querySelector('input[type="password"]'));
+      const hasAppText = Boolean(document.querySelector("textarea, [contenteditable='true']"));
+      if (hasPassword && !hasAppText) return true;
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  function draftEntryCount() {
+    const draft = readDraftBuffer();
+    return Array.isArray(draft?.entries) ? draft.entries.length : 0;
+  }
+
   async function flushDraftToLearned(extraEntries, companyHint) {
-    if (typeof mergeLearnedAnswers !== "function" || !chrome?.runtime?.id) return 0;
+    if (typeof mergeLearnedAnswers !== "function") return 0;
+    // Harden: orphaned content scripts can have runtime.id but a missing storage.local.
+    let storageLocal;
+    try {
+      if (!chrome?.runtime?.id) return 0;
+      storageLocal = chrome?.storage?.local;
+    } catch {
+      return 0;
+    }
+    if (typeof storageLocal?.get !== "function" || typeof storageLocal?.set !== "function") {
+      return 0;
+    }
+
     const live = Array.isArray(extraEntries) ? extraEntries : scrapeAnswerEntries();
     const draft = readDraftBuffer();
-    const merged = new Map();
-    for (const e of draft?.entries || []) {
-      if (e?.label && e?.value) merged.set(String(e.label).toLowerCase(), e);
+    const merged = Object.create(null);
+    for (const e of Array.isArray(draft?.entries) ? draft.entries : []) {
+      if (e?.label && e?.value) merged[String(e.label).toLowerCase()] = e;
     }
     for (const e of live) {
-      if (e?.label && e?.value) merged.set(String(e.label).toLowerCase(), e);
+      if (e?.label && e?.value) merged[String(e.label).toLowerCase()] = e;
     }
-    const entries = [...merged.values()];
+    const entries = Object.values(merged);
     if (!entries.length) return 0;
 
     let company = companyHint || draft?.company || "";
@@ -155,7 +195,13 @@
       draft?.companyKey ||
       "";
 
-    const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+    let learnedAnswers;
+    try {
+      const got = await storageLocal.get("learnedAnswers");
+      learnedAnswers = got?.learnedAnswers;
+    } catch {
+      return 0;
+    }
     const { store, learnedCount } = mergeLearnedAnswers(
       {
         byQuestion: learnedAnswers?.byQuestion || {},
@@ -163,7 +209,11 @@
       },
       { companyKey, entries },
     );
-    await chrome.storage.local.set({ learnedAnswers: store });
+    try {
+      await storageLocal.set({ learnedAnswers: store });
+    } catch {
+      return 0;
+    }
     console.info("[ApplyTrack] flushed", learnedCount, "answers for", companyKey || "(global)");
     return learnedCount;
   }
@@ -846,10 +896,26 @@
      */
     async function persistLearnedEntries(entries, companyName) {
       if (!entries?.length || typeof mergeLearnedAnswers !== "function") return 0;
+      let storageLocal;
+      try {
+        if (!chrome?.runtime?.id) return 0;
+        storageLocal = chrome?.storage?.local;
+      } catch {
+        return 0;
+      }
+      if (typeof storageLocal?.get !== "function" || typeof storageLocal?.set !== "function") {
+        return 0;
+      }
       const company = companyName || parsed?.company || "";
       const companyKey = typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
       // Write chrome.storage.local directly — more reliable than messaging during navigation.
-      const { learnedAnswers } = await chrome.storage.local.get("learnedAnswers");
+      let learnedAnswers;
+      try {
+        const got = await storageLocal.get("learnedAnswers");
+        learnedAnswers = got?.learnedAnswers;
+      } catch {
+        return 0;
+      }
       const { store, learnedCount } = mergeLearnedAnswers(
         {
           byQuestion: learnedAnswers?.byQuestion || {},
@@ -857,17 +923,19 @@
         },
         { companyKey, entries },
       );
-      await chrome.storage.local.set({ learnedAnswers: store });
+      try {
+        await storageLocal.set({ learnedAnswers: store });
+      } catch {
+        return 0;
+      }
       return learnedCount;
     }
 
     async function learnAnswersFromPage(companyName) {
       try {
+        if (looksLikeAuthPage()) return 0;
         const entries = bufferAnswersFromPage(companyName || parsed?.company);
-        if (!entries.length) {
-          // Still try flush of any prior draft buffer
-          return await flushDraftToLearned([], companyName || parsed?.company);
-        }
+        if (!entries.length && !draftEntryCount()) return 0;
         return await flushDraftToLearned(entries, companyName || parsed?.company);
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersFromPage failed", err);
@@ -1554,6 +1622,9 @@
       if (now - lastLearnAt < 800) return;
       lastLearnAt = now;
       try {
+        // Login / SSO / empty wizards — silent no-op (no spam warnings).
+        if (looksLikeAuthPage()) return;
+
         let company = "";
         try {
           if (typeof readJobCtx === "function") {
@@ -1563,13 +1634,15 @@
           /* ignore */
         }
         if (!company) company = currentParsed()?.company || "";
-        bufferAnswersFromPage(company);
-        const n = await flushDraftToLearned(null, company);
-        if (!n) {
-          // Silent on thank-you pages; only note when we expected fields.
-          if (!/thank|submitted|success/i.test(document.body?.innerText?.slice(0, 500) || "")) {
-            console.warn("[ApplyTrack] submit learn: no draft answers buffered yet");
-          }
+
+        const hadDraft = draftEntryCount() > 0;
+        const live = bufferAnswersFromPage(company);
+        if (!hadDraft && !live.length) return;
+
+        const n = await flushDraftToLearned(live, company);
+        if (!n && (hadDraft || live.length)) {
+          // Had answers buffered/scraped but nothing persisted (filtered or storage unavailable).
+          console.warn("[ApplyTrack] submit learn: no draft answers buffered yet");
         }
       } catch (err) {
         console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
