@@ -334,6 +334,12 @@ const ApplyTrackATS = {
       ) {
         return "PowerSecure";
       }
+      if (
+        /^(onestream|one1018onso)$/i.test(compact) ||
+        /^one\s*stream(\s+software)?$/i.test(c)
+      ) {
+        return "OneStream";
+      }
       // ALL-CAPS logo alts → Title case
       if (/^[A-Z0-9][A-Z0-9 .&'’-]*$/.test(c) && /[A-Z]/.test(c) && c.length <= 40) {
         c = c
@@ -347,6 +353,12 @@ const ApplyTrackATS = {
       const s = (t || "").trim();
       const compact = s.replace(/\s/g, "");
       if (/^(ukg|ultipro|ulti\s*pro)$/i.test(s)) return true;
+      // Confirmation templates include "Download Firefox/Chrome" image alts
+      if (
+        /^(firefox|chrome|safari|edge|internet explorer|msie|opera|brave)(\s+logo)?$/i.test(s)
+      ) {
+        return true;
+      }
       // Opaque tenant path segments
       if (/^[a-z]{2,}\d+[a-z]{2,}$/i.test(compact)) return true;
       if (/^[a-z0-9]{6,}$/i.test(compact) && /\d/.test(compact) && /[a-z]/i.test(compact)) {
@@ -432,6 +444,13 @@ const ApplyTrackATS = {
    * Custom domains (careers.roblox.com?gh_jid=…) must not lock nav chrome as company.
    */
   greenhouse: {
+    scrubRole(t) {
+      return (t || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/^job application for\s+/i, "")
+        .trim();
+    },
     scrubCompany(t) {
       let c = (t || "").trim().replace(/\s+/g, " ");
       // Nav phrases — drop entirely (do not strip to "Early")
@@ -448,7 +467,16 @@ const ApplyTrackATS = {
       return c;
     },
     isWeakRole(t) {
-      return /^loading(\s+job\s+details?)?\b/i.test(t) || /^job details$/i.test(t);
+      const s = (t || "").trim();
+      if (/^loading(\s+job\s+details?)?\b/i.test(s) || /^job details$/i.test(s)) return true;
+      // Custom career shells use the site SEO title, not the job
+      // ("PayIt Careers | Make Government Work Better | See Openings").
+      if ((s.match(/\s\|\s/g) || []).length >= 2) return true;
+      if (/\b(see openings|current openings|view openings|open positions)\b/i.test(s)) return true;
+      if (/\bcareers?\b/i.test(s) && !/\b(recruiter|director|manager|program|partner|coach)\b/i.test(s)) {
+        return true;
+      }
+      return false;
     },
     isWeakCompany(t) {
       const s = (t || "").trim();
@@ -510,7 +538,7 @@ const ApplyTrackATS = {
       if (!s) return true;
       // Nav / wizard / cookie chrome — never a job title
       if (
-        /^(quick\s*links?|let'?s\s+begin[!?.]*|my\s+applications?|my\s+profile|job\s+search|search\s+jobs|career\s+opportunities|cookie|cookies?|accept\s+all|this\s+website\s+uses\s+cookies|privacy\s+(notice|policy|preference)|sign\s+in|log\s+in|home|careers?|jobs?|apply|submit|next|back|review|welcome[!?.]*|get\s+started[!?.]*|start\s+(your\s+)?application|application\s+form|candidate\s+profile|recruiting\s+team|why\s+work|connect\s+with\s+us|internal\s+server\s+error)$/i.test(
+        /^(quick\s*links?|let'?s\s+begin[!?.]*|already have an account\??|my\s+applications?|my\s+profile|job\s+search|search\s+jobs|career\s+opportunities|cookie|cookies?|accept\s+all|this\s+website\s+uses\s+cookies|privacy\s+(notice|policy|preference)|sign\s+in|log\s+in|home|careers?|jobs?|apply|submit|next|back|review|welcome[!?.]*|get\s+started[!?.]*|start\s+(your\s+)?application|application\s+form|candidate\s+profile|recruiting\s+team|why\s+work|connect\s+with\s+us|internal\s+server\s+error)$/i.test(
           s,
         )
       ) {
@@ -534,6 +562,13 @@ const ApplyTrackATS = {
       }
       if (
         /^(career\d*|jobs?|careers?|www|home|login|portal|recruiting)$/i.test(s)
+      ) {
+        return true;
+      }
+      if (
+        /^(about us|what we do|why work|working with us|inclusion|get to know)\b/i.test(
+          s,
+        )
       ) {
         return true;
       }
@@ -562,6 +597,14 @@ function isWeakRoleBase(role) {
   }
   // Custom Greenhouse parents often show "Loading job details" before the embed paints
   if (/^loading\b/i.test(t) || /^please wait\b/i.test(t)) return true;
+  if (
+    /^(already have an account\??|set your cookie preferences|cookie preferences|icims careers portal|b careers|your browser is (not )?unsupported|browser is unsupported|position description|upload your resume)$/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/^description$/i.test(t)) return true;
   return /^(you have applied for|thank you|thanks for applying|enter your (information|info)|create (a |your )?login|connect your account|sign in|log in|login|resume( upload)?|personal information|additional information|work experience|education|equal opportunity|review|application( form)?|my profile|work summary|demographics|preferences|candidate(\s+profile)?|profile|follow your application|careers?|jobs?|career center|manual application|manual apply|start (your )?application|submit application)\b/i.test(
     t,
   );

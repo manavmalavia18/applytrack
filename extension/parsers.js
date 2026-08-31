@@ -129,6 +129,41 @@ function jdFromJsonLd() {
   return parseJobPostingJsonLd().description;
 }
 
+/** Rippling stores HTML in description.role + description.company, not JSON-LD. */
+function jdFromRipplingJobPost(jobPost) {
+  if (!jobPost || typeof jobPost !== "object") return "";
+  const desc = jobPost.description;
+  let html = "";
+  if (desc && typeof desc === "object") {
+    html = [desc.role, desc.company, desc.responsibilities]
+      .filter((part) => typeof part === "string" && part.trim())
+      .join("\n");
+  } else if (typeof desc === "string") {
+    html = desc;
+  }
+  if (!html) {
+    html =
+      (typeof jobPost.descriptionHtml === "string" && jobPost.descriptionHtml) ||
+      (typeof jobPost.jobDescription === "string" && jobPost.jobDescription) ||
+      "";
+  }
+  const text = normalizeJdText(jdHtmlToText(html));
+  return isDecentJobDescription(text) ? text : "";
+}
+
+/** Greenhouse boards API `content` is an HTML string. */
+function jdFromGreenhouseApiJob(data) {
+  if (!data || typeof data !== "object") return "";
+  const html =
+    typeof data.content === "string"
+      ? data.content
+      : typeof data.content?.html === "string"
+        ? data.content.html
+        : "";
+  const text = normalizeJdText(jdHtmlToText(html));
+  return isDecentJobDescription(text) ? text : "";
+}
+
 // Priority tiers: ATS-specific containers first, then common patterns, then generic content.
 const JD_SELECTOR_TIERS = [
   [
@@ -589,6 +624,7 @@ function parseRippling() {
 
   let role = "";
   let company = "";
+  let nextJd = "";
 
   // __NEXT_DATA__ is authoritative on Rippling SSR boards
   try {
@@ -608,6 +644,7 @@ function parseRippling() {
         jobPost?.board?.title ||
         "";
       if (co && !badCompany(co, role)) company = co;
+      nextJd = jdFromRipplingJobPost(jobPost);
     }
   } catch {
     /* ignore */
@@ -720,6 +757,7 @@ function parseRippling() {
     url: listingUrl || location.href.split("?")[0],
     jobKey: uuid ? `rippling:${uuid}` : null,
     source: "rippling",
+    jobDescription: nextJd,
   };
 }
 
@@ -1301,6 +1339,31 @@ function greenhouseHostBrand(hostname) {
   return "";
 }
 
+/** Board slugs to try for boards-api.greenhouse.io (embed token, host, company). */
+function greenhouseBoardTokenGuesses(parsed) {
+  const tokens = [];
+  const found = typeof findGreenhouseBoardToken === "function" ? findGreenhouseBoardToken() : "";
+  if (found) tokens.push(String(found).toLowerCase());
+  let host = "";
+  try {
+    host = (parsed?.url ? new URL(parsed.url).hostname : location.hostname).replace(/^www\./, "");
+  } catch {
+    host = String(typeof location !== "undefined" ? location.hostname : "").replace(/^www\./, "");
+  }
+  const brand = greenhouseHostBrand(host);
+  if (brand) {
+    const compact = brand.replace(/\s+/g, "").toLowerCase();
+    tokens.push(compact);
+    const stripped = compact.replace(/(gov|jobs|careers|hr|talent)$/i, "");
+    if (stripped && stripped.length >= 3) tokens.push(stripped);
+  }
+  const co = String(parsed?.company || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  if (co.length >= 3 && co.length <= 40) tokens.push(co);
+  return [...new Set(tokens.filter(Boolean))];
+}
+
 /** Fill weak Greenhouse parent-frame parses from the public boards API. */
 async function enrichGreenhouseFromApi(parsed) {
   if (!parsed || parsed.source !== "greenhouse") return parsed;
@@ -1309,6 +1372,7 @@ async function enrichGreenhouseFromApi(parsed) {
     (parsed.jobKey || "").replace(/^greenhouse:/i, "") ||
     params.get("gh_jid") ||
     params.get("jobid") ||
+    location.pathname.match(/\/jobs\/(\d+)/)?.[1] ||
     "";
   if (!jid) return parsed;
   const roleWeak =
@@ -1317,11 +1381,14 @@ async function enrichGreenhouseFromApi(parsed) {
   const coWeak =
     !parsed.company ||
     (typeof isWeakCompany === "function" && isWeakCompany(parsed.company, "greenhouse"));
-  if (!roleWeak && !coWeak) return parsed;
+  const jdWeak =
+    typeof isDecentJobDescription === "function"
+      ? !isDecentJobDescription(parsed.jobDescription)
+      : !String(parsed.jobDescription || "").trim();
+  // Title/company can be solid on job-boards.greenhouse.io while the SPA JD is still empty.
+  if (!roleWeak && !coWeak && !jdWeak) return parsed;
 
-  const host = location.hostname.replace(/^www\./, "");
-  const hostGuess = greenhouseHostBrand(host);
-  const tokens = [...new Set([findGreenhouseBoardToken(), hostGuess].filter(Boolean))];
+  const tokens = greenhouseBoardTokenGuesses(parsed);
   if (!tokens.length) return parsed;
 
   for (const token of tokens) {
@@ -1337,11 +1404,13 @@ async function enrichGreenhouseFromApi(parsed) {
         data.offices?.[0]?.name ||
         ""
       ).trim();
-      if (!apiRole && !apiCompany) continue;
+      const apiJd = jdFromGreenhouseApiJob(data);
+      if (!apiRole && !apiCompany && !apiJd) continue;
       return {
         ...parsed,
         role: roleWeak && apiRole ? apiRole : parsed.role,
         company: coWeak && apiCompany ? apiCompany : parsed.company,
+        jobDescription: jdWeak && apiJd ? apiJd : parsed.jobDescription,
         jobKey: parsed.jobKey || `greenhouse:${jid}`,
         source: "greenhouse",
       };
@@ -1362,14 +1431,16 @@ function parseGreenhouse() {
     "";
 
   const badTitle =
-    /^(job details|loading(\s+job\s+details?)?.*|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application|work at .+|early careers?|newsroom|opportunities)\b/i;
+    /^(job details|loading(\s+job\s+details?)?.*|careers?|jobs?|overview|home|about|application|apply now|all jobs|thank you|thanks for|confirmation|follow your application|work at .+|early careers?|newsroom|opportunities|see openings)\b/i;
 
   function pickRole(...candidates) {
     for (const raw of candidates) {
-      const t = (raw || "").trim().replace(/\s+/g, " ");
+      let t = (raw || "").trim().replace(/\s+/g, " ");
+      if (typeof scrubRole === "function") t = scrubRole(t, "greenhouse") || t;
       if (!t || t.length < 4 || t.length > 180) continue;
       if (badTitle.test(t)) continue;
       if (/thank you|thanks for applying/i.test(t)) continue;
+      if ((t.match(/\s\|\s/g) || []).length >= 2) continue;
       if (typeof isWeakRole === "function" && isWeakRole(t, "greenhouse")) continue;
       return t;
     }
@@ -2401,9 +2472,20 @@ function parseUltiPro() {
       .trim();
     if (!c || c.length < 2 || c.length > 60) return "";
     if (/^(logo|ulti|ukg|ultipro|image)$/i.test(c)) return "";
+    if (/^(firefox|chrome|safari|edge|internet explorer|msie|opera|brave)(\s+logo)?$/i.test(c)) {
+      return "";
+    }
     if (/logo|ulti\s*pro|\bukg\b|image/i.test(c)) return "";
     if (looksLikeTenantCode(c)) return "";
     return c;
+  }
+
+  function isBrowserDownloadImg(img) {
+    if (!(img instanceof Element)) return false;
+    const src = `${img.getAttribute("src") || ""} ${img.src || ""}`.toLowerCase();
+    const alt = (img.getAttribute("alt") || "").toLowerCase();
+    return /\/browsers\/|firefox\.png|chrome\.png|internet-explorer|safari\.png/.test(src) ||
+      /^(firefox|chrome|safari|edge|internet explorer)(\s+logo)?$/.test(alt.trim());
   }
 
   function pick(...cands) {
@@ -2439,11 +2521,31 @@ function parseUltiPro() {
     company = "PowerSecure";
   } else if (/tos1002tabs|toshiba|tostabs/i.test(tenant)) {
     company = "Toshiba";
+  } else if (/one1018onso|onestream/i.test(tenant) || /\bonestream\b/i.test(body)) {
+    company = "OneStream";
   }
 
   if (!company && ldUltiPro.company && !looksLikeTenantCode(ldUltiPro.company)) {
     const fromLd = cleanBrand(ldUltiPro.company);
     if (fromLd) company = fromLd;
+  }
+
+  // "Work at OneStream" on ApplicationSubmitted confirmation pages
+  if (!company) {
+    let workAt = "";
+    for (const el of document.querySelectorAll("a, button, h1, h2, h3, p")) {
+      const t = textOf(el);
+      const m = t.match(/^work at\s+(.+)$/i);
+      if (m?.[1]) {
+        workAt = m[1].trim();
+        break;
+      }
+    }
+    if (!workAt) {
+      workAt = (body.match(/\bwork at\s+([^\n.|]{2,50})/i)?.[1] || "").trim();
+    }
+    const fromWorkAt = cleanBrand(workAt);
+    if (fromWorkAt) company = fromWorkAt;
   }
 
   // Logo alt / header brand (img alt — textOf(img) is always empty)
@@ -2456,6 +2558,7 @@ function parseUltiPro() {
       ) ||
       cleanBrand(
         [...document.querySelectorAll("img[alt]")]
+          .filter((img) => !isBrowserDownloadImg(img))
           .map((img) => (img.getAttribute("alt") || "").trim())
           .find((a) => cleanBrand(a)) || "",
       );
@@ -2783,6 +2886,8 @@ function parseSuccessFactors() {
     .trim();
   if (typeof scrubRole === "function") role = scrubRole(role, SRC) || role;
   if (typeof isWeakRole === "function" && isWeakRole(role, SRC)) role = "";
+  // Career hub / login (no jobReqId) — never lock nav chrome as a posting
+  if (!jobId) role = "";
 
   // Employer signals — never hostname "SuccessFactors"
   let company = "";
@@ -2873,9 +2978,13 @@ function writeJobCtx(parsed) {
     jobDescription: typeof parsed.jobDescription === "string" ? parsed.jobDescription : "",
   };
   const json = JSON.stringify(payload);
-  sessionStorage.setItem(`applytrack:job:${parsed.jobKey}`, json);
-  sessionStorage.setItem("applytrack:job:latest", json);
-  if (src) sessionStorage.setItem(`applytrack:ctx:${src}`, json);
+  try {
+    sessionStorage.setItem(`applytrack:job:${parsed.jobKey}`, json);
+    sessionStorage.setItem("applytrack:job:latest", json);
+    if (src) sessionStorage.setItem(`applytrack:ctx:${src}`, json);
+  } catch {
+    /* quota / private mode / opaque origin */
+  }
 }
 
 /** True when company/role labels are the same string (ignoring whitespace/case). */
@@ -3571,15 +3680,19 @@ function parseJobPage() {
     };
   }
 
-  // Extract the JD once per posting — skip the (relatively expensive) DOM walk
-  // once a decent one is already locked in for this jobKey/source.
+  // Prefer a JD the ATS parser already extracted (e.g. Rippling __NEXT_DATA__),
+  // then a locked session JD, then a DOM/JSON-LD scrape.
   try {
     if (typeof extractJobDescription === "function") {
       const lockedCtx =
         (parsed.jobKey && readJobCtx(`applytrack:job:${parsed.jobKey}`)) ||
         (parsed.source && readJobCtx(`applytrack:ctx:${parsed.source}`));
-      if (!isDecentJobDescription(lockedCtx?.jobDescription)) {
-        parsed.jobDescription = extractJobDescription();
+      if (!isDecentJobDescription(parsed.jobDescription)) {
+        if (isDecentJobDescription(lockedCtx?.jobDescription)) {
+          parsed.jobDescription = lockedCtx.jobDescription;
+        } else {
+          parsed.jobDescription = extractJobDescription();
+        }
       }
     }
   } catch {

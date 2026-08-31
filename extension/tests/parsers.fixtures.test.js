@@ -31,5 +31,12 @@ for (const file of fixtureFiles) {
         `${fixture.name}: expected ${key} to equal ${JSON.stringify(fixture.expected[key])}, got ${JSON.stringify(parsed[key])}`,
       );
     }
+    if (fixture.expected.jobDescriptionIncludes) {
+      assert.match(
+        String(parsed.jobDescription || ""),
+        fixture.expected.jobDescriptionIncludes,
+        `${fixture.name}: jobDescription should match ${fixture.expected.jobDescriptionIncludes}`,
+      );
+    }
   });
 }

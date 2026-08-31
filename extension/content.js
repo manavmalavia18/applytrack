@@ -8,73 +8,109 @@
 
   const DRAFT_STORAGE_KEY = "applytrack:answerDraft";
 
-  /** Live-scrape filled text answers (Ashby-friendly). Used for draft buffer + learn. */
+  function isExtensionDeadError(err) {
+    const msg = err instanceof Error ? err.message : String(err || "");
+    return /extension context invalidated|message port closed|receiving end does not exist/i.test(msg);
+  }
+
+  /** Live-scrape filled screening answers. Used for draft buffer + company memory. */
   function scrapeAnswerEntries() {
     const nodes = [
       ...document.querySelectorAll("textarea"),
       ...document.querySelectorAll('input[type="text"]'),
-      ...document.querySelectorAll('input[type="email"]'),
+      ...document.querySelectorAll('input[type="url"]'),
       ...document.querySelectorAll("input:not([type])"),
       ...document.querySelectorAll("[contenteditable='true']"),
       ...document.querySelectorAll("[role='textbox']"),
+      ...document.querySelectorAll("select"),
     ];
     const entries = [];
     let idx = 0;
-    for (const input of nodes) {
-      if (!(input instanceof HTMLElement)) continue;
-      if (input.disabled || input.readOnly) continue;
-      if (input.type === "password" || input.type === "hidden") continue;
-      // Don't require visible — Ashby may detach nodes mid-submit; still try .value
-      const value = input.isContentEditable
-        ? (input.innerText || input.textContent || "").trim()
-        : String(input.value || "").trim();
-      if (!value || value.length < 2) continue;
-      if (typeof shouldLearnValue === "function" && !shouldLearnValue(value)) continue;
-
-      let label = "";
-      if (input.id) {
-        try {
-          const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-          label = (byFor?.innerText || "").trim().replace(/\s+/g, " ");
-        } catch {
-          /* ignore */
+    const push = (label, value) => {
+      let lab = String(label || "").trim().replace(/\s+/g, " ");
+      const val = String(value || "").trim();
+      if (!val) return;
+      if (typeof isContactChromeLabel === "function" && isContactChromeLabel(lab)) return;
+      if (typeof shouldLearnValue === "function" && !shouldLearnValue(val)) return;
+      if (/^cards?\s*\[/i.test(lab) || /\[[0-9a-f-]{8,}\]/i.test(lab)) lab = "";
+      if (lab) {
+        lab = lab.split(/\n/)[0].slice(0, 240);
+        if (val.length > 20 && lab.includes(val.slice(0, 20))) {
+          lab = lab.slice(0, lab.indexOf(val.slice(0, 20))).trim();
         }
       }
-      if (!label) {
-        const block = input.closest(
-          "[class*='question'], [class*='Question'], [class*='Field'], [class*='field'], [class*='ashby'], fieldset, label, li, section, form > div, form div",
-        );
-        if (block) {
-          const clone = block.cloneNode(true);
-          clone.querySelectorAll("textarea, input, button, select, [contenteditable]").forEach((n) => n.remove());
-          label = (clone.innerText || "").trim().replace(/\s+/g, " ");
-        }
-      }
-      if (!label) {
-        let prev = input.previousElementSibling;
-        for (let i = 0; i < 5 && prev; i++, prev = prev.previousElementSibling) {
-          const t = (prev.innerText || "").trim().replace(/\s+/g, " ");
-          if (t.length >= 6 && t.length < 300) {
-            label = t;
-            break;
-          }
-        }
-      }
-      if (!label) label = (input.getAttribute("aria-label") || input.getAttribute("placeholder") || "").trim();
-      if (/^cards?\s*\[/i.test(label) || /\[[0-9a-f-]{8,}\]/i.test(label)) label = "";
-      if (label) {
-        label = label.split(/\n/)[0].slice(0, 240);
-        if (value.length > 20 && label.includes(value.slice(0, 20))) {
-          label = label.slice(0, label.indexOf(value.slice(0, 20))).trim();
-        }
-      }
-      if (!label || label.length < 4) label = `question_${idx + 1}`;
-      // Skip Type here placeholders used as labels
-      if (/^type here/i.test(label)) label = `question_${idx + 1}`;
-      entries.push({ label, value });
+      if (!lab || lab.length < 4) lab = `question_${idx + 1}`;
+      if (/^type here/i.test(lab)) lab = `question_${idx + 1}`;
+      if (typeof isImportantLearnedEntry === "function" && !isImportantLearnedEntry(lab, val)) return;
+      entries.push({ label: lab, value: val });
       idx += 1;
+    };
+
+    for (const input of nodes) {
+      try {
+        if (!(input instanceof HTMLElement)) continue;
+        if (input.disabled || input.readOnly) continue;
+        if (input.type === "password" || input.type === "hidden" || input.type === "email") continue;
+        if (input.closest?.("#applytrack-host")) continue;
+        let value = "";
+        if (input.tagName === "SELECT") {
+          const opt = input.options?.[input.selectedIndex];
+          value = (opt?.text || opt?.value || input.value || "").trim();
+          if (/^(select|choose|please select)/i.test(value)) continue;
+        } else if (input.isContentEditable) {
+          value = (input.innerText || input.textContent || "").trim();
+        } else {
+          value = String(input.value || "").trim();
+        }
+        if (!value || value.length < 1) continue;
+        const label = typeof labelFor === "function" ? labelFor(input) : "";
+        push(label, value);
+      } catch {
+        /* detached / cross-origin node during submit */
+      }
+    }
+
+    const radioSeen = new Set();
+    for (const radio of document.querySelectorAll('input[type="radio"]')) {
+      try {
+        if (!(radio instanceof HTMLInputElement) || !radio.name || !radio.checked) continue;
+        if (radioSeen.has(radio.name)) continue;
+        radioSeen.add(radio.name);
+        const legend = (radio.closest("fieldset")?.querySelector("legend")?.innerText || "")
+          .trim()
+          .replace(/\s+/g, " ");
+        const option =
+          (radio.closest("label")?.innerText || radio.getAttribute("aria-label") || radio.value || "")
+            .trim()
+            .replace(/\s+/g, " ");
+        const label = legend || (typeof labelFor === "function" ? labelFor(radio) : "") || option;
+        push(label, option || radio.value || "Yes");
+      } catch {
+        /* ignore */
+      }
     }
     return entries;
+  }
+
+  function resolveLearnCompany(hint) {
+    const names = [];
+    if (hint) names.push(hint);
+    try {
+      if (typeof readJobCtx === "function") {
+        const latest = readJobCtx("applytrack:job:latest");
+        if (latest?.company) names.push(latest.company);
+      }
+    } catch {
+      /* ignore */
+    }
+    for (const raw of names) {
+      const t = String(raw || "").trim();
+      if (!t) continue;
+      if (/^(unknown|unknown company)$/i.test(t)) continue;
+      if (typeof isWeakCompany === "function" && isWeakCompany(t)) continue;
+      return t;
+    }
+    return String(hint || "").trim();
   }
 
   function readDraftBuffer() {
@@ -115,16 +151,10 @@
   }
 
   function bufferAnswersFromPage(companyHint) {
-    let company = companyHint || "";
-    try {
-      if (!company && typeof readJobCtx === "function") {
-        company = readJobCtx("applytrack:job:latest")?.company || "";
-      }
-    } catch {
-      /* ignore */
-    }
+    const company = resolveLearnCompany(companyHint);
     const entries = scrapeAnswerEntries();
     if (entries.length) writeDraftBuffer(company, entries);
+    if (entries.length) schedulePersistLearned(company);
     return entries;
   }
 
@@ -149,6 +179,491 @@
       /* ignore */
     }
     return false;
+  }
+
+  let fillTargets = [];
+  const userTouchedFields = new WeakSet();
+  document.addEventListener(
+    "input",
+    (e) => {
+      if (e.isTrusted && e.target instanceof HTMLElement) userTouchedFields.add(e.target);
+    },
+    true,
+  );
+
+  function fieldIsVisible(node) {
+    if (!(node instanceof HTMLElement)) return false;
+    try {
+      const st = getComputedStyle(node);
+      if (st.display === "none" || st.visibility === "hidden") return false;
+      const r = node.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  function isJunkLabel(t) {
+    const s = String(t || "").trim();
+    if (!s) return true;
+    if (/^cards?\s*\[/i.test(s) || /\[[0-9a-f-]{8,}\]/i.test(s)) return true;
+    if (/^[a-z_]+\[\d+\]$/i.test(s)) return true;
+    if (/^(field|input|question)[_-]?\d+$/i.test(s)) return true;
+    return false;
+  }
+
+  function isContactChromeLabel(label) {
+    return /^(first name|last name|full name|preferred name|email|e-?mail address|phone|mobile|password|address( line)?\s*1?|city|zip|postal|country|state|province|date of birth)$/i.test(
+      String(label || "").trim(),
+    );
+  }
+
+  function labelFor(input) {
+    const clean = (raw) => {
+      const t = String(raw || "")
+        .replace(/\s+/g, " ")
+        .replace(/\*$/, "")
+        .trim();
+      return isJunkLabel(t) ? "" : t;
+    };
+
+    if (input.id) {
+      try {
+        const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        const t = clean(byFor?.innerText);
+        if (t.length > 2) return t;
+      } catch {
+        /* ignore */
+      }
+    }
+    const parentLabel = input.closest("label");
+    if (parentLabel) {
+      const clone = parentLabel.cloneNode(true);
+      clone.querySelectorAll("input,textarea,select,button").forEach((n) => n.remove());
+      const t = clean(clone.innerText);
+      if (t.length > 2) return t;
+    }
+
+    const aria = clean(input.getAttribute("aria-label"));
+    if (aria.length > 2) return aria;
+
+    const block = input.closest(
+      ".field-wrapper, .text-input-wrapper, .input-wrapper, [class*='application-question'], [class*='ApplicationField'], [class*='question'], [data-qa*='question'], [data-automation-id*='formField'], fieldset, .form-group, li",
+    );
+    if (block) {
+      const heading = block.querySelector(
+        "label, legend, .application-label, [class*='label'], [class*='Label'], h3, h4, h5, p, span",
+      );
+      const t = clean(heading?.innerText);
+      if (t.length > 2 && t.length < 280) return t;
+      const blockText = clean(
+        Array.from(block.querySelectorAll("div,p,span,label,legend"))
+          .map((el) => el.innerText)
+          .find((x) => x && x.trim().length > 12 && !isJunkLabel(x) && !x.includes(input.value || "xxx")),
+      );
+      if (blockText.length > 2 && blockText.length < 280) return blockText;
+    }
+
+    let sib = input.previousElementSibling;
+    for (let n = 0; n < 4 && sib; n++, sib = sib.previousElementSibling) {
+      const t = clean(sib.innerText);
+      if (t.length > 2 && t.length < 280) return t;
+    }
+
+    const ph = clean(input.getAttribute("placeholder"));
+    if (ph.length > 2) return ph;
+    return "";
+  }
+
+  function fieldValue(el) {
+    if (!el) return "";
+    if (el.isContentEditable || el.getAttribute?.("contenteditable") === "true") {
+      return (el.innerText || el.textContent || "").trim();
+    }
+    return String(el.value || "").trim();
+  }
+
+  function isHtmlDateInput(el) {
+    if (!(el instanceof HTMLInputElement)) return false;
+    const t = el.type;
+    return t === "date" || t === "datetime-local" || t === "month" || t === "time" || t === "week";
+  }
+
+  function isFillableQuestion(label, el) {
+    if (!label || label.length < 4) return false;
+    if (typeof isSimplifyOwnedQuestion === "function" ? isSimplifyOwnedQuestion(label) : isContactChromeLabel(label)) {
+      return false;
+    }
+    // Bare HTML date inputs are contact/chrome unless clearly a start-date question.
+    if (isHtmlDateInput(el)) {
+      return typeof questionKind === "function" && questionKind(label) === "startDate";
+    }
+    if (el?.tagName === "TEXTAREA" || el?.isContentEditable) return true;
+    if (el?.tagName === "SELECT") return true;
+    if (el?.type === "radio") return true;
+    if (typeof questionKind === "function" && questionKind(label)) return true;
+    return /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain|additional|anything else|hear about/i.test(
+      label,
+    );
+  }
+
+  function scrapeFields() {
+    const nodes = [
+      ...document.querySelectorAll("textarea"),
+      ...document.querySelectorAll('input[type="text"]'),
+      ...document.querySelectorAll('input[type="url"]'),
+      ...document.querySelectorAll('input[type="date"]'),
+      ...document.querySelectorAll('input[type="datetime-local"]'),
+      ...document.querySelectorAll('input[type="month"]'),
+      ...document.querySelectorAll("input:not([type])"),
+      ...document.querySelectorAll("[contenteditable='true']"),
+      ...document.querySelectorAll("[role='textbox']"),
+      ...document.querySelectorAll("select"),
+      ...document.querySelectorAll(
+        '[data-automation-id="textInput"] input, [data-automation-id="textAreaField"] textarea, [data-automation-id="formField-textArea"] textarea',
+      ),
+    ];
+    const seen = new Set();
+    const out = [];
+    let i = 0;
+    for (const input of nodes) {
+      if (!(input instanceof HTMLElement) || seen.has(input)) continue;
+      seen.add(input);
+      if (input.closest?.("#applytrack-host")) continue;
+      if (input.classList?.contains("visually-hidden")) continue;
+      if (!fieldIsVisible(input) || input.disabled || input.readOnly) continue;
+      if (input.type === "password" || input.type === "hidden" || input.type === "email" || input.type === "file") {
+        continue;
+      }
+      const label = labelFor(input);
+      if (!isFillableQuestion(label, input)) continue;
+      out.push({
+        id: `q_${i++}`,
+        label,
+        el: input,
+        kind: isHtmlDateInput(input) ? "date" : "text",
+        currentValue: fieldValue(input),
+      });
+    }
+
+    const radioSeen = new Set();
+    for (const radio of document.querySelectorAll('input[type="radio"]')) {
+      if (!(radio instanceof HTMLInputElement) || !radio.name || radioSeen.has(radio.name)) continue;
+      radioSeen.add(radio.name);
+      if (!fieldIsVisible(radio) || radio.disabled) continue;
+      if (radio.closest?.("#applytrack-host")) continue;
+      const legend = radio.closest("fieldset")?.querySelector("legend");
+      const label = labelFor(radio) || (legend?.innerText || "").trim().replace(/\s+/g, " ");
+      if (!isFillableQuestion(label, radio)) continue;
+      let group = [];
+      try {
+        group = [...document.querySelectorAll(`input[type="radio"][name="${CSS.escape(radio.name)}"]`)];
+      } catch {
+        continue;
+      }
+      const current = group.find((r) => r.checked);
+      const currentValue = current ? labelFor(current) || current.value || "" : "";
+      out.push({ id: `q_${i++}`, label, el: group, kind: "radio", currentValue });
+    }
+
+    fillTargets = out;
+    return out.map(({ id, label, currentValue }) => ({ id, label, currentValue }));
+  }
+
+  function fillSelect(el, answer) {
+    const want = String(answer || "").trim().toLowerCase();
+    const opts = [...el.options];
+    const pick =
+      opts.find((o) => (o.text || "").trim().toLowerCase() === want) ||
+      opts.find((o) => (o.value || "").trim().toLowerCase() === want) ||
+      (/^yes\b/i.test(answer) && opts.find((o) => /^(yes|y)\b/i.test((o.text || o.value).trim()))) ||
+      (/^no\b/i.test(answer) && opts.find((o) => /^(no|n)\b/i.test((o.text || o.value).trim()))) ||
+      opts.find((o) => {
+        const t = (o.text || "").trim().toLowerCase();
+        return t.length > 1 && (want.includes(t) || t.includes(want.slice(0, 48)));
+      });
+    if (!pick) return;
+    el.value = pick.value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function fillRadioGroup(group, answer) {
+    const want = String(answer || "").trim().toLowerCase();
+    let pick = null;
+    for (const r of group) {
+      const t = `${labelFor(r)} ${r.value} ${r.getAttribute("aria-label") || ""}`.trim().toLowerCase();
+      if (t === want || (want.length > 3 && t.includes(want.slice(0, 24)))) {
+        pick = r;
+        break;
+      }
+    }
+    if (!pick && /^yes\b/i.test(answer)) {
+      pick = group.find((r) => /^(yes|y|true)\b/i.test(`${labelFor(r)} ${r.value}`.trim()));
+    }
+    if (!pick && /^no\b/i.test(answer)) {
+      pick = group.find((r) => /^(no|n|false)\b/i.test(`${labelFor(r)} ${r.value}`.trim()));
+    }
+    if (!pick) return;
+    try {
+      pick.click();
+    } catch {
+      /* ignore */
+    }
+    pick.checked = true;
+    pick.dispatchEvent(new Event("input", { bubbles: true }));
+    pick.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function nativeSetValue(el, value) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.tagName === "SELECT") {
+      fillSelect(el, value);
+      return true;
+    }
+    // HTML date-like inputs require strict formats; never assign locations/prose.
+    if (el instanceof HTMLInputElement && isHtmlDateInput(el)) {
+      const normalized =
+        typeof normalizeDateInputValue === "function" ? normalizeDateInputValue(value, el.type) : "";
+      if (!normalized) return false;
+      value = normalized;
+    }
+    el.focus();
+    try {
+      const tracker = el._valueTracker;
+      if (tracker) tracker.setValue("");
+    } catch {
+      /* React 16+ */
+    }
+    if (el.isContentEditable || el.getAttribute("contenteditable") === "true") {
+      try {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, value);
+      } catch {
+        el.textContent = value;
+      }
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: value, inputType: "insertText" }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+      return true;
+    }
+    // Ashby-style insertText so Greenhouse React textareas actually keep the value.
+    let inserted = false;
+    try {
+      if (typeof el.select === "function") el.select();
+      inserted = document.execCommand("insertText", false, value);
+    } catch {
+      inserted = false;
+    }
+    if (!inserted || String(el.value || "") !== value) {
+      const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc?.set) desc.set.call(el, value);
+      else el.value = value;
+    }
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: value, inputType: "insertText" }));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    return true;
+  }
+
+  /** Greenhouse hides cover-letter / extra textareas behind "Enter manually". */
+  function revealManualTextFields() {
+    const buttons = document.querySelectorAll(
+      'button[data-testid="cover_letter-text"], button[data-testid$="-text"], .file-upload button, .button-container button',
+    );
+    for (const btn of buttons) {
+      if (!(btn instanceof HTMLElement)) continue;
+      const testid = btn.getAttribute("data-testid") || "";
+      const text = (btn.innerText || "").trim();
+      if (/resume-text/i.test(testid) && !/cover/i.test(testid)) continue;
+      if (!/^enter manually$/i.test(text) && !/cover_letter-text/i.test(testid)) continue;
+      const wrap = btn.closest(".field-wrapper, .file-upload, [role='group']");
+      if (wrap?.querySelector("textarea:not(.visually-hidden)")) continue;
+      try {
+        btn.click();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function fillField(id, answer) {
+    const field = fillTargets.find((f) => f.id === id);
+    if (!field || !answer) return false;
+    try {
+      if (field.kind === "radio" && Array.isArray(field.el)) {
+        fillRadioGroup(field.el, answer);
+        return true;
+      }
+      return nativeSetValue(field.el, answer) !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  function looksLikeApplicationForm(source) {
+    try {
+      if (looksLikeAuthPage()) return false;
+      if (typeof isApplicationWizardPage === "function" && isApplicationWizardPage(location.href, source)) {
+        return true;
+      }
+      if (
+        /\/application\b|\/apply\b|oneclick|manualapplication|applicantflow|applyflow|jobapplication/i.test(
+          location.href,
+        )
+      ) {
+        return true;
+      }
+      if (
+        document.querySelector(
+          "#application, .application--form, [data-qa='application-form'], [data-automation-id*='applyFlow'], [class*='ApplicationForm']",
+        )
+      ) {
+        return true;
+      }
+      return document.querySelectorAll("textarea, [contenteditable='true']").length >= 1;
+    } catch {
+      return false;
+    }
+  }
+
+  async function lookupLocalLearned(questions, companyKey) {
+    if (typeof lookupLearnedAnswers !== "function") return [];
+    try {
+      if (!chrome?.runtime?.id) return [];
+      const got = await chrome.storage.local.get("learnedAnswers");
+      return lookupLearnedAnswers(got?.learnedAnswers || {}, { questions, companyKey }) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  let formAutoFillStarted = false;
+
+  function startFormAutoFill(hooks) {
+    if (formAutoFillStarted) return;
+    formAutoFillStarted = true;
+    let filling = false;
+    let lastHref = location.href;
+    const fillTries = new Map();
+    const bankTried = new Set();
+    const cachedAnswers = new Map();
+
+    function companyKey() {
+      const company = hooks?.getCompany?.() || "";
+      return typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
+    }
+
+    function shouldSkipField(q) {
+      if (q.currentValue) return true;
+      const el = fillTargets.find((f) => f.id === q.id)?.el;
+      if (el instanceof HTMLElement && userTouchedFields.has(el)) return true;
+      if (Array.isArray(el) && el.some((n) => n instanceof HTMLElement && userTouchedFields.has(n))) return true;
+      const nq = typeof normalizeQuestion === "function" ? normalizeQuestion(q.label) : String(q.label || "").toLowerCase();
+      if ((fillTries.get(nq) || 0) >= 8) return true;
+      return false;
+    }
+
+    function reportLeftover(filled) {
+      const leftover = scrapeFields()
+        .filter((q) => !q.currentValue)
+        .map((q) => ({ label: q.label }));
+      if (typeof hooks?.onProgress === "function") hooks.onProgress({ filled, leftover });
+      try {
+        if (chrome?.runtime?.id) {
+          const sent = chrome.runtime.sendMessage({
+            type: "FILL_PROGRESS",
+            payload: { filled, leftover },
+          });
+          if (sent && typeof sent.catch === "function") sent.catch(() => {});
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function run() {
+      if (filling) return 0;
+      if (!looksLikeApplicationForm(hooks?.getSource?.())) return 0;
+      revealManualTextFields();
+      await new Promise((r) => setTimeout(r, 60));
+      const questions = scrapeFields();
+      const empty = questions.filter((q) => !shouldSkipField(q));
+      if (!empty.length) {
+        reportLeftover(0);
+        return 0;
+      }
+      filling = true;
+      try {
+        let matches = await lookupLocalLearned(empty, companyKey());
+        for (const q of empty) {
+          const nq =
+            typeof normalizeQuestion === "function" ? normalizeQuestion(q.label) : String(q.label || "").toLowerCase();
+          if (matches.some((m) => m.id === q.id)) continue;
+          const cached = cachedAnswers.get(nq);
+          if (cached) matches.push({ id: q.id, label: q.label, answer: cached, source: "cached" });
+        }
+        const filledIds = new Set(matches.map((m) => m.id));
+        const still = empty.filter((q) => {
+          if (filledIds.has(q.id)) return false;
+          const nq =
+            typeof normalizeQuestion === "function" ? normalizeQuestion(q.label) : String(q.label || "").toLowerCase();
+          if (bankTried.has(nq)) return false;
+          bankTried.add(nq);
+          return true;
+        });
+        if (still.length && typeof hooks?.bankFill === "function") {
+          try {
+            const bank = await hooks.bankFill(still);
+            if (Array.isArray(bank)) matches = matches.concat(bank);
+          } catch {
+            /* answer bank optional */
+          }
+        }
+        let n = 0;
+        for (const m of matches) {
+          const nq =
+            typeof normalizeQuestion === "function" ? normalizeQuestion(m.label) : String(m.label || "").toLowerCase();
+          if (nq && m.answer) cachedAnswers.set(nq, m.answer);
+          fillTries.set(nq, (fillTries.get(nq) || 0) + 1);
+          if (fillField(m.id, m.answer)) n += 1;
+        }
+        if (n && typeof hooks?.onFilled === "function") hooks.onFilled(matches);
+        reportLeftover(n);
+        return n;
+      } catch (err) {
+        if (!isExtensionDeadError(err)) console.warn("[ApplyTrack] auto-fill failed", err);
+        return 0;
+      } finally {
+        filling = false;
+      }
+    }
+
+    const schedule = () => {
+      clearTimeout(schedule._t);
+      schedule._t = setTimeout(() => void run(), 300);
+    };
+
+    // Let Simplify fill name/resume first, then fill leftover screening answers.
+    [1200, 2500, 5000, 9000].forEach((ms) => setTimeout(() => void run(), ms));
+    document.addEventListener("focusin", schedule, true);
+    try {
+      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    } catch {
+      /* ignore */
+    }
+    setInterval(() => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      fillTries.clear();
+      bankTried.clear();
+      cachedAnswers.clear();
+      void run();
+    }, 700);
+
+    hooks.run = run;
   }
 
   function draftEntryCount() {
@@ -182,14 +697,7 @@
     const entries = Object.values(merged);
     if (!entries.length) return 0;
 
-    let company = companyHint || draft?.company || "";
-    try {
-      if (!company && typeof readJobCtx === "function") {
-        company = readJobCtx("applytrack:job:latest")?.company || "";
-      }
-    } catch {
-      /* ignore */
-    }
+    let company = resolveLearnCompany(companyHint || draft?.company || "");
     const companyKey =
       (typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "") ||
       draft?.companyKey ||
@@ -216,6 +724,14 @@
     }
     console.info("[ApplyTrack] flushed", learnedCount, "answers for", companyKey || "(global)");
     return learnedCount;
+  }
+
+  let persistLearnTimer = null;
+  function schedulePersistLearned(companyHint) {
+    if (persistLearnTimer) clearTimeout(persistLearnTimer);
+    persistLearnTimer = setTimeout(() => {
+      void flushDraftToLearned(null, resolveLearnCompany(companyHint));
+    }, 1500);
   }
 
   function supported() {
@@ -270,6 +786,23 @@
       if (isTop && (!uiStarted || !hasUi())) {
         uiStarted = true;
         if (!hasUi()) startUi();
+      } else if (!isTop) {
+        startFormAutoFill({
+          getCompany: () => {
+            try {
+              return (typeof readJobCtx === "function" && readJobCtx("applytrack:job:latest")?.company) || "";
+            } catch {
+              return "";
+            }
+          },
+          getSource: () => {
+            try {
+              return (typeof readJobCtx === "function" && readJobCtx("applytrack:job:latest")?.source) || "";
+            } catch {
+              return "";
+            }
+          },
+        });
       }
       if (!autoStarted) {
         autoStarted = true;
@@ -342,9 +875,10 @@
     let filledMatches = [];
     let filledLearnedCount = 0;
     let unmatchedFields = [];
+    let leftoverCount = 0;
     let autoNote = null;
-    let scraped = [];
     let dead = false;
+    let companyMemoryCount = 0;
 
     const host = document.createElement("div");
     host.id = "applytrack-host";
@@ -581,11 +1115,30 @@
       }
     }
 
+    async function refreshCompanyMemoryCount() {
+      try {
+        const company = resolveLearnCompany(parsed?.company);
+        const key = typeof companyKeyFromName === "function" ? companyKeyFromName(company) : "";
+        if (!key || !chrome?.runtime?.id) {
+          companyMemoryCount = 0;
+          return;
+        }
+        const got = await chrome.storage.local.get("learnedAnswers");
+        companyMemoryCount =
+          typeof companyAnswerCount === "function"
+            ? companyAnswerCount(got?.learnedAnswers, key)
+            : Object.keys(got?.learnedAnswers?.byCompany?.[key] || {}).length;
+      } catch {
+        companyMemoryCount = 0;
+      }
+    }
+
     function paintTab() {
       tab.classList.toggle("applied", found && !stale);
       if (dead) tab.textContent = "Reload tab";
       else if (found && stale) tab.textContent = "Re-apply?";
       else if (found) tab.textContent = STATUS[application?.status] || "Sent";
+      else if (leftoverCount > 0) tab.textContent = leftoverCount === 1 ? "1 left" : `${leftoverCount} left`;
       else tab.textContent = "ApplyTrack";
     }
 
@@ -652,6 +1205,11 @@
         "";
       const showReqId = Boolean(reqId) || parsed?.source === "workday";
       const lowConfidence = canEdit && parsed?.captureConfidence === "low";
+      const coName = company && !/^(unknown|unknown company)$/i.test(company) ? company : "";
+      const memoryHint =
+        companyMemoryCount > 0 && coName
+          ? `${coName}: ${companyMemoryCount} screening answers on file. Simplify fills name/resume; ApplyTrack fills these.`
+          : `Simplify fills name and resume. Type the screening answers (why ${coName || "this company"}, work auth). Saved for next time.`;
 
       let html = `
         <div class="status ${statusClass}">${escapeHtml(statusText)}</div>
@@ -680,7 +1238,7 @@
               }`
         }
         ${autoNote ? `<p class="hint">${escapeHtml(autoNote)}</p>` : ""}
-        <p class="hint">Answers you type are saved for this company when you Submit. Next visit → auto-fill.</p>
+        <p class="hint">${escapeHtml(memoryHint)}</p>
         <div class="actions">
           <button class="act ghost" id="refill" ${filling || busy ? "disabled" : ""}>
             ${filling ? "Filling…" : "Re-fill saved answers"}
@@ -694,7 +1252,7 @@
           html += `<p class="filled-hint">Auto-filled ${filledLearnedCount} saved answer${filledLearnedCount === 1 ? "" : "s"} for this company.</p>`;
         }
         if (unmatchedFields.length) {
-          html += `<div class="unmatched"><div class="q">New questions (type once — saved on Submit) (${unmatchedFields.length})</div>`;
+          html += `<div class="unmatched"><div class="q">Still empty — type these (${unmatchedFields.length})</div>`;
           unmatchedFields.forEach((u) => {
             html += `<div class="ua">${escapeHtml(u.label)}</div>`;
           });
@@ -759,134 +1317,6 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
-    }
-
-    function visible(node) {
-      if (!(node instanceof HTMLElement)) return false;
-      const st = getComputedStyle(node);
-      if (st.display === "none" || st.visibility === "hidden") return false;
-      const r = node.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    }
-
-    function isJunkLabel(t) {
-      const s = String(t || "").trim();
-      if (!s) return true;
-      // Lever/Ashby internal names like cards[uuid][field0]
-      if (/^cards?\s*\[/i.test(s) || /\[[0-9a-f-]{8,}\]/i.test(s)) return true;
-      if (/^[a-z_]+\[\d+\]$/i.test(s)) return true;
-      if (/^(field|input|question)[_-]?\d+$/i.test(s)) return true;
-      return false;
-    }
-
-    function labelFor(input) {
-      const clean = (raw) => {
-        const t = String(raw || "")
-          .replace(/\s+/g, " ")
-          .replace(/\*$/, "")
-          .trim();
-        return isJunkLabel(t) ? "" : t;
-      };
-
-      if (input.id) {
-        try {
-          const byFor = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-          const t = clean(byFor?.innerText);
-          if (t.length > 2) return t;
-        } catch {
-          /* ignore */
-        }
-      }
-      const parentLabel = input.closest("label");
-      if (parentLabel) {
-        const clone = parentLabel.cloneNode(true);
-        clone.querySelectorAll("input,textarea,select,button").forEach((n) => n.remove());
-        const t = clean(clone.innerText);
-        if (t.length > 2) return t;
-      }
-
-      const aria = clean(input.getAttribute("aria-label"));
-      if (aria.length > 2) return aria;
-
-      // Lever / custom boards: question text in nearby heading or application-question block
-      const block = input.closest(
-        "[class*='application-question'], [class*='ApplicationField'], [class*='question'], [data-qa*='question'], fieldset, .form-group, li, section",
-      );
-      if (block) {
-        const heading = block.querySelector(
-          "label, .application-label, [class*='label'], [class*='Label'], h3, h4, h5, legend, p, span",
-        );
-        const t = clean(heading?.innerText);
-        if (t.length > 2 && t.length < 280) return t;
-        // First non-input text node chunk
-        const blockText = clean(
-          Array.from(block.querySelectorAll("div,p,span,label"))
-            .map((el) => el.innerText)
-            .find((x) => x && x.trim().length > 12 && !isJunkLabel(x) && !x.includes(input.value || "xxx")),
-        );
-        if (blockText.length > 2 && blockText.length < 280) return blockText;
-      }
-
-      // Previous sibling text (common on Lever)
-      let sib = input.previousElementSibling;
-      for (let n = 0; n < 4 && sib; n++, sib = sib.previousElementSibling) {
-        const t = clean(sib.innerText);
-        if (t.length > 2 && t.length < 280) return t;
-      }
-
-      const ph = clean(input.getAttribute("placeholder"));
-      if (ph.length > 2) return ph;
-
-      // Never fall back to name=cards[uuid][fieldN]
-      return "";
-    }
-
-    function fieldValue(el) {
-      if (!el) return "";
-      if (el.isContentEditable) return (el.innerText || el.textContent || "").trim();
-      return String(el.value || "").trim();
-    }
-
-    function scrapeFields() {
-      const nodes = [
-        ...document.querySelectorAll("textarea"),
-        ...document.querySelectorAll('input[type="text"]'),
-        ...document.querySelectorAll("input:not([type])"),
-        ...document.querySelectorAll("[contenteditable='true']"),
-      ];
-      const out = [];
-      let i = 0;
-      for (const input of nodes) {
-        if (!visible(input) || input.disabled) continue;
-        const label = labelFor(input);
-        if (!label || label.length < 8) continue;
-        const value = fieldValue(input);
-        const isLong =
-          input.tagName === "TEXTAREA" ||
-          input.isContentEditable ||
-          value.length >= 40 ||
-          /why|describe|tell|experience|about|cover|motivat|interest|challenge|project|explain|visa|sponsor|authoriz|work\s*permit|relocat|remote|hybrid|onsite|salary|compensation|start\s*date|available\s*to\s*start|notice\s*period|\bai\b|\bllm\b|machine\s*learning|\btest(ing)?\b|playwright|cypress|\bqa\b|\baws\b|\bazure\b|\bgcp\b|cloud|microservice|startup|proud|accomplishment|additional|anything else|hear about/i.test(
-            label,
-          );
-        if (!isLong) continue;
-        const id = `q_${i++}`;
-        out.push({ id, label, el: input, currentValue: value });
-      }
-      scraped = out;
-      return out.map(({ id, label, currentValue }) => ({ id, label, currentValue }));
-    }
-
-    function fillField(id, answer) {
-      const field = scraped.find((f) => f.id === id);
-      if (!field) return;
-      const input = field.el;
-      input.focus();
-      const proto = input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const desc = Object.getOwnPropertyDescriptor(proto, "value");
-      if (desc?.set) desc.set.call(input, answer);
-      else input.value = answer;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
     /**
@@ -1002,6 +1432,48 @@
               parsed = resolveJobPayload(parsed);
             }
           }
+          const parsedRoleOk =
+            Boolean(parsed?.role) &&
+            parsed.role !== "Unknown role" &&
+            !(typeof isWeakRole === "function" && isWeakRole(parsed.role, src));
+          const parsedCoOk =
+            Boolean(parsed?.company) &&
+            !(typeof isWeakCompany === "function" && isWeakCompany(parsed.company, src));
+          // Saved row locked a careers-shell title / browser-alt company —
+          // keep the real job from the page.
+          if ((!appRoleOk && parsedRoleOk) || (!appCoOk && parsedCoOk)) {
+            if (!appRoleOk && parsedRoleOk) {
+              application = { ...application, role: parsed.role };
+            }
+            if (!appCoOk && parsedCoOk) {
+              application = { ...application, company: parsed.company };
+            }
+            void send("SAVE", {
+              ...parsed,
+              url: parsed.url || location.href,
+              status: application.status || "applied",
+              role: parsedRoleOk ? parsed.role : application.role,
+              company: parsedCoOk ? parsed.company : application.company,
+            });
+          }
+          // Revisit of an already-tracked job: if the page/API now has a JD and
+          // the saved row is empty, write it without changing status.
+          const parsedJdOk =
+            typeof isDecentJobDescription === "function"
+              ? isDecentJobDescription(parsed?.jobDescription)
+              : String(parsed?.jobDescription || "").trim().length >= 80;
+          const appJdOk =
+            typeof isDecentJobDescription === "function"
+              ? isDecentJobDescription(application.jobDescription)
+              : String(application.jobDescription || "").trim().length >= 80;
+          if (!appJdOk && parsedJdOk) {
+            void send("SAVE", {
+              ...parsed,
+              url: parsed.url || location.href,
+              status: application.status || "applied",
+              jobDescription: parsed.jobDescription,
+            });
+          }
         }
         if (found && !stale && parsed?.jobKey) {
           try {
@@ -1012,6 +1484,7 @@
         }
       }
       paintTab();
+      await refreshCompanyMemoryCount();
       if (open || forceRender) render();
     }
 
@@ -1020,6 +1493,10 @@
         typeof resolveJobPayload === "function"
           ? resolveJobPayload(parsed || parseJobPage())
           : parsed || parseJobPage();
+      if (typeof enrichGreenhouseFromApi === "function" && parsed?.source === "greenhouse") {
+        parsed = await enrichGreenhouseFromApi(parsed);
+        if (typeof resolveJobPayload === "function") parsed = resolveJobPayload(parsed);
+      }
       // Panel fields: only override when the user typed a real title.
       // Never let wizard chrome ("Manual Application") force-overwrite a solid lock.
       const roleIn = body.querySelector("#role");
@@ -1058,6 +1535,12 @@
       if (parsed.source === "oracle" && !parsed.jobKey && !manualOk) {
         error = "Open the job page (…/job/####), or type the role/company above.";
         if (open) render();
+        return;
+      }
+      if (parsed.source === "successfactors" && !parsed.jobKey && !manualOk) {
+        error = "Open the job posting (not the careers home), or type the role/company above.";
+        setOpen(true);
+        render();
         return;
       }
       if (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source)) {
@@ -1106,7 +1589,7 @@
       paintTab();
     }
 
-    /** Fill only from answers saved for this company (and global fallbacks). No profile bank. */
+    /** Fill from learned answers, then the profile answer bank for leftovers. */
     async function fillFromCompanyMemory() {
       filling = true;
       fillError = null;
@@ -1115,6 +1598,8 @@
       unmatchedFields = [];
       setOpen(true);
       render();
+      revealManualTextFields();
+      await new Promise((r) => setTimeout(r, 60));
       const questions = scrapeFields();
       if (!questions.length) {
         filling = false;
@@ -1122,27 +1607,82 @@
         render();
         return;
       }
+      const empty = questions.filter((q) => !q.currentValue);
       const companyKey =
         typeof companyKeyFromName === "function" ? companyKeyFromName(parsed?.company || "") : "";
-      const learnedRes = await send("LOOKUP_LEARNED", { questions, companyKey });
-      filling = false;
-      if (!learnedRes?.ok) {
-        fillError = learnedRes?.error || "Could not load saved answers";
-        unmatchedFields = questions;
-        render();
-        return;
+      let matches = await lookupLocalLearned(empty, companyKey);
+      const filledIds = new Set(matches.map((m) => m.id));
+      const still = empty.filter((q) => !filledIds.has(q.id));
+      if (still.length) {
+        const bankRes = await send("FILL_ANSWERS", {
+          questions: still,
+          company: parsed?.company || "",
+          role: parsed?.role || "",
+          jobDescription: parsed?.jobDescription || "",
+        });
+        if (bankRes?.ok && Array.isArray(bankRes.answers)) {
+          matches = matches.concat(bankRes.answers);
+        }
       }
-      const learnedMatches = learnedRes.answers || [];
-      const filledIds = new Set(learnedMatches.map((m) => m.id));
-      learnedMatches.forEach((m) => fillField(m.id, m.answer));
-      filledLearnedCount = learnedMatches.length;
-      filledMatches = learnedMatches;
-      unmatchedFields = questions.filter((q) => !filledIds.has(q.id) && !q.currentValue);
+      filling = false;
+      matches.forEach((m) => fillField(m.id, m.answer));
+      const doneIds = new Set(matches.map((m) => m.id));
+      filledLearnedCount = matches.length;
+      filledMatches = matches;
+      unmatchedFields = questions.filter((q) => !doneIds.has(q.id) && !q.currentValue);
+      leftoverCount = unmatchedFields.length;
+      paintTab();
       render();
     }
 
     // Expose for popup "Show on this tab"
     window.__applytrackOpen = () => setOpen(true);
+    function applyFillProgress(payload = {}) {
+      const leftover = Array.isArray(payload.leftover) ? payload.leftover : [];
+      unmatchedFields = leftover;
+      leftoverCount = leftover.length;
+      if (payload.filled > 0) {
+        filledLearnedCount = payload.filled;
+        autoNote = `Filled ${payload.filled} leftover screening answer${payload.filled === 1 ? "" : "s"} (Simplify handles name/resume).`;
+      }
+      paintTab();
+      if (open) render();
+    }
+    window.__applytrackMarkApplied = (app = {}) => {
+      found = true;
+      stale = false;
+      error = null;
+      const nextRole = (app.role || "").trim();
+      const nextCo = (app.company || "").trim();
+      const roleOk =
+        nextRole &&
+        nextRole !== "Unknown role" &&
+        !(typeof isWeakRole === "function" && isWeakRole(nextRole, parsed?.source || app.source));
+      application = {
+        ...(application || {}),
+        status: app.status || "applied",
+        role: roleOk ? nextRole : application?.role || parsed?.role,
+        company: nextCo || application?.company || parsed?.company,
+        jobKey: app.jobKey || parsed?.jobKey,
+      };
+      if (roleOk) {
+        parsed = { ...(parsed || {}), role: nextRole, company: nextCo || parsed?.company };
+      }
+      paintTab();
+      setOpen(false);
+    };
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg?.type === "APPLIED_SAVED") {
+          window.__applytrackMarkApplied(msg.payload || {});
+        }
+        if (msg?.type === "FILL_PROGRESS") {
+          applyFillProgress(msg.payload || {});
+        }
+      });
+    } catch {
+      /* ignore */
+    }
 
     try {
       parsed = typeof parseJobPage === "function" ? parseJobPage() : null;
@@ -1159,27 +1699,37 @@
     paintTab();
     void refresh(false);
 
-    // Auto-fill from this company's saved answers when the application form opens.
-    let autoFilledOnce = false;
-    async function maybeAutoFillLearned() {
-      if (autoFilledOnce) return;
-      const onAppForm =
-        /\/application\b|\/apply\b|oneclick|manualapplication|applicantflow/i.test(location.href) ||
-        document.querySelectorAll("textarea").length >= 1;
-      if (!onAppForm) return;
-      const questions = scrapeFields();
-      const empty = questions.filter((q) => !q.currentValue);
-      if (empty.length < 1) return;
-      autoFilledOnce = true;
-      await fillFromCompanyMemory();
-      if (filledMatches.length) {
-        autoNote = `Auto-filled ${filledMatches.length} answer${filledMatches.length === 1 ? "" : "s"} from your past ${parsed?.company || "company"} applications.`;
-        setOpen(true);
-        render();
-      }
-    }
-    setTimeout(() => void maybeAutoFillLearned(), 1200);
-    setTimeout(() => void maybeAutoFillLearned(), 3500);
+    startFormAutoFill({
+      getCompany: () => {
+        try {
+          return (
+            parsed?.company ||
+            (typeof readJobCtx === "function" && readJobCtx("applytrack:job:latest")?.company) ||
+            ""
+          );
+        } catch {
+          return parsed?.company || "";
+        }
+      },
+      getSource: () => parsed?.source || "",
+      bankFill: async (questions) => {
+        const res = await send("FILL_ANSWERS", {
+          questions,
+          company: parsed?.company || "",
+          role: parsed?.role || "",
+          jobDescription: parsed?.jobDescription || "",
+        });
+        return res?.ok && Array.isArray(res.answers) ? res.answers : [];
+      },
+      onFilled: (matches) => {
+        filledMatches = matches;
+        filledLearnedCount = matches.length;
+        autoNote = `Filled ${matches.length} leftover screening answer${matches.length === 1 ? "" : "s"} (Simplify handles name/resume).`;
+        paintTab();
+        if (open) render();
+      },
+      onProgress: (payload) => applyFillProgress(payload),
+    });
 
     // SPA boards often hydrate the title after first paint
     if (
@@ -1246,7 +1796,11 @@
       }
       if (location.href !== last) {
         last = location.href;
-        parsed = parseJobPage();
+        try {
+          parsed = parseJobPage();
+        } catch (err) {
+          console.warn("[ApplyTrack] parseJobPage failed", err);
+        }
         if (open) void refresh(true);
         else void refresh(false);
       }
@@ -1255,6 +1809,7 @@
 
   function startAutoApply() {
     let lastClick = 0;
+    let lastLearnAt = 0;
     let pending = null; // { startedAt, href }
     let thankYouLogged = false;
     let watchTimer = null;
@@ -1394,7 +1949,7 @@
       return /^(apply|apply now|apply for this job)$/i.test(t);
     }
 
-    /** Final submit — watch for success before writing Applied. */
+    /** Final submit — record Applied immediately (do not wait for thank-you). */
     function isFinalSubmit(text) {
       const t = text.trim().replace(/\s+/g, " ");
       if (!t || t.length > 100) return false;
@@ -1416,36 +1971,101 @@
     }
 
     function currentParsed() {
-      if (typeof parseJobPage !== "function") return null;
-      const raw = parseJobPage();
-      if (typeof resolveJobPayload === "function") return resolveJobPayload(raw);
-      if (typeof mergeRememberedJob === "function" && raw?.source) {
-        return mergeRememberedJob(raw, raw.source);
+      try {
+        if (typeof parseJobPage !== "function") return null;
+        const raw = parseJobPage();
+        if (typeof resolveJobPayload === "function") return resolveJobPayload(raw);
+        if (typeof mergeRememberedJob === "function" && raw?.source) {
+          return mergeRememberedJob(raw, raw.source);
+        }
+        return raw;
+      } catch (err) {
+        if (!isExtensionDeadError(err)) {
+          console.warn("[ApplyTrack] currentParsed failed", err);
+        }
+        return null;
       }
-      return raw;
+    }
+
+    function lockedParsedForSave() {
+      let parsed = currentParsed();
+      // Workday / Workable thank-you pages sometimes drop ids or titles —
+      // fall back to the locked listing captured on the first job page.
+      if (
+        (!parsed?.jobKey || (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source))) &&
+        typeof readJobCtx === "function"
+      ) {
+        const latest = readJobCtx("applytrack:job:latest");
+        if (latest?.jobKey && !(typeof isWeakRole === "function" && isWeakRole(latest.role, latest.source))) {
+          parsed = {
+            ...parsed,
+            ...latest,
+            jobKey: latest.jobKey,
+            role: latest.role,
+            company: latest.company || parsed?.company,
+            url: latest.url || parsed?.url,
+            source: latest.source || parsed?.source,
+          };
+        }
+      }
+      return parsed;
+    }
+
+    /** Fire-and-forget Applied write. Survives closing the tab after Submit. */
+    function queueAppliedNow(reason) {
+      try {
+        if (!chrome?.runtime?.id) {
+          startWatch();
+          return;
+        }
+      } catch {
+        startWatch();
+        return;
+      }
+      const parsed = lockedParsedForSave();
+      const roleWeak =
+        typeof isWeakRole === "function" && isWeakRole(parsed?.role, parsed?.source);
+      // Greenhouse embeds often sit on a careers shell with gh_jid — save by id
+      // even when the parent title is marketing chrome; background fills the role.
+      if (!parsed?.jobKey) {
+        startWatch();
+        return;
+      }
+      if (roleWeak && parsed.source !== "greenhouse") {
+        startWatch();
+        return;
+      }
+      if (alreadyLogged(parsed.jobKey)) return;
+      markLogged(parsed.jobKey);
+      const boardTokens =
+        parsed.source === "greenhouse" && typeof greenhouseBoardTokenGuesses === "function"
+          ? greenhouseBoardTokenGuesses(parsed)
+          : undefined;
+      try {
+        const sent = chrome.runtime.sendMessage({
+          type: "AUTO_SAVE_APPLIED",
+          payload: {
+            ...parsed,
+            url: parsed.url || location.href,
+            status: "applied",
+            notes: reason ? `Auto-logged (${reason})` : "",
+            ...(boardTokens?.length ? { boardTokens } : {}),
+          },
+        });
+        if (sent && typeof sent.catch === "function") sent.catch(() => {});
+      } catch {
+        /* background missed it — thank-you / Mark Applied is fallback */
+      }
     }
 
     async function saveApplied(reason) {
       try {
-        if (!chrome?.runtime?.id) return false;
-        let parsed = currentParsed();
-        // Workday / Workable thank-you pages sometimes drop ids or titles —
-        // fall back to the locked listing captured on the first job page.
-        if ((!parsed?.jobKey || (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source))) &&
-            typeof readJobCtx === "function") {
-          const latest = readJobCtx("applytrack:job:latest");
-          if (latest?.jobKey && !isWeakRole(latest.role, latest.source)) {
-            parsed = {
-              ...parsed,
-              ...latest,
-              jobKey: latest.jobKey,
-              role: latest.role,
-              company: latest.company || parsed?.company,
-              url: latest.url || parsed?.url,
-              source: latest.source || parsed?.source,
-            };
-          }
+        try {
+          if (!chrome?.runtime?.id) return false;
+        } catch {
+          return false;
         }
+        const parsed = lockedParsedForSave();
         if (!parsed?.jobKey) return false;
         if (typeof isWeakRole === "function" && isWeakRole(parsed.role, parsed?.source)) return false;
         // Already handled this session — treat as done (don't retry forever)
@@ -1474,9 +2094,6 @@
         markLogged(parsed.jobKey);
         // Backup learn if fields still exist (usually empty after thank-you).
         void learnAnswersOnSubmit();
-        if (isTop && typeof window.__applytrackOpen === "function") {
-          window.__applytrackOpen();
-        }
         return true;
       } catch {
         return false;
@@ -1547,39 +2164,79 @@
       return null;
     }
 
-    function onFinalSubmitGesture() {
-      const now = Date.now();
-      if (now - lastClick < 800) {
-        void learnAnswersOnSubmit();
-        return;
+    function looksLikeSelfIdOrEeocPage() {
+      try {
+        // Headings only — job-apply pages often mention EEO in a footer paragraph.
+        const heading = `${document.title} ${[...document.querySelectorAll("h1, h2, h3, legend")]
+          .slice(0, 8)
+          .map((el) => el.innerText || "")
+          .join(" ")}`.slice(0, 1200);
+        return /voluntary self-identif|invite to self-identif|disability status|protected veteran|eeo-1|gender identity|race\/ethnicity/i.test(
+          heading,
+        );
+      } catch {
+        return false;
       }
-      lastClick = now;
-      currentParsed();
-      // Capture answers NOW — Ashby often navigates and clears fields immediately.
-      void learnAnswersOnSubmit();
-      startWatch();
+    }
+
+    /** Snapshot answers always; only record Applied on a real last-step submit. */
+    function shouldWatchSubmit(e) {
+      const submitter = e?.submitter instanceof HTMLElement ? e.submitter : null;
+      const text = submitter ? clickText(submitter) : "";
+      if (text && isApplyStart(text)) return false;
+      if (/submit(\s+my)?\s+application|send(\s+my)?\s+application/i.test(text)) return true;
+      if (/^submit your application$/i.test(text)) return true;
+      if (looksLikeSelfIdOrEeocPage()) return false;
+      if (submitter) return isFinalSubmit(text);
+      // Programmatic submit (Ashby) — watch unless this is clearly an EEO/self-ID step.
+      return true;
+    }
+
+    function onFinalSubmitGesture(opts = {}) {
+      try {
+        const now = Date.now();
+        if (now - lastClick < 800) {
+          void learnAnswersOnSubmit();
+          return;
+        }
+        lastClick = now;
+        currentParsed();
+        // Capture answers NOW — Ashby often navigates and clears fields immediately.
+        void learnAnswersOnSubmit();
+        if (opts.watch !== false) queueAppliedNow("submit-click");
+      } catch (err) {
+        if (!isExtensionDeadError(err)) {
+          console.warn("[ApplyTrack] onFinalSubmitGesture failed", err);
+        }
+      }
     }
 
     // pointerdown fires before React/Ashby clears the form (earlier than click).
     document.addEventListener(
       "pointerdown",
       (e) => {
-        const node = findClickableInPath(e);
-        if (!node) return;
-        if (
-          node.closest?.(
-            "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent']",
-          )
-        ) {
-          return;
+        try {
+          const node = findClickableInPath(e);
+          if (!node) return;
+          if (
+            node.closest?.(
+              "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent']",
+            )
+          ) {
+            return;
+          }
+          const text = clickText(node);
+          if (isApplyStart(text)) {
+            currentParsed();
+            return;
+          }
+          if (!isFinalSubmit(text)) return;
+          onFinalSubmitGesture({ watch: !looksLikeSelfIdOrEeocPage() || /application/i.test(text) });
+        } catch (err) {
+          if (!isExtensionDeadError(err)) {
+            console.warn("[ApplyTrack] pointerdown handler failed", err);
+          }
         }
-        const text = clickText(node);
-        if (isApplyStart(text)) {
-          currentParsed();
-          return;
-        }
-        if (!isFinalSubmit(text)) return;
-        onFinalSubmitGesture();
       },
       true,
     );
@@ -1587,35 +2244,58 @@
     document.addEventListener(
       "click",
       (e) => {
-        const node = findClickableInPath(e);
-        if (!node) return;
-        if (
-          node.closest?.(
-            "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent']",
-          )
-        ) {
-          return;
+        try {
+          const node = findClickableInPath(e);
+          if (!node) return;
+          if (
+            node.closest?.(
+              "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent']",
+            )
+          ) {
+            return;
+          }
+          const text = clickText(node);
+          if (isApplyStart(text)) {
+            currentParsed();
+            return;
+          }
+          if (!isFinalSubmit(text)) return;
+          onFinalSubmitGesture({ watch: !looksLikeSelfIdOrEeocPage() || /application/i.test(text) });
+        } catch (err) {
+          if (!isExtensionDeadError(err)) {
+            console.warn("[ApplyTrack] click handler failed", err);
+          }
         }
-        const text = clickText(node);
-        if (isApplyStart(text)) {
-          currentParsed();
-          return;
-        }
-        if (!isFinalSubmit(text)) return;
-        onFinalSubmitGesture();
       },
       true,
     );
 
     document.addEventListener(
       "submit",
-      () => {
-        onFinalSubmitGesture();
+      (e) => {
+        try {
+          const target = e.target;
+          if (
+            target instanceof Element &&
+            target.closest?.(
+              "#onetrust-banner-sdk, #onetrust-pc-sdk, [id*='cookie'], [class*='cookie'], [id*='consent'], [class*='consent'], #applytrack-host",
+            )
+          ) {
+            return;
+          }
+          // Snapshot answers even on Continue / EEO — ATS often wipes fields on navigate.
+          void learnAnswersOnSubmit();
+          if (!shouldWatchSubmit(e)) return;
+          onFinalSubmitGesture();
+        } catch (err) {
+          if (!isExtensionDeadError(err)) {
+            console.warn("[ApplyTrack] submit handler failed", err);
+          }
+        }
       },
       true,
     );
 
-    let lastLearnAt = 0;
     /** Buffer live fields + flush draft → chrome.storage.local (survives Ashby thank-you wipe). */
     async function learnAnswersOnSubmit() {
       const now = Date.now();
@@ -1639,13 +2319,11 @@
         const live = bufferAnswersFromPage(company);
         if (!hadDraft && !live.length) return;
 
-        const n = await flushDraftToLearned(live, company);
-        if (!n && (hadDraft || live.length)) {
-          // Had answers buffered/scraped but nothing persisted (filtered or storage unavailable).
-          console.warn("[ApplyTrack] submit learn: no draft answers buffered yet");
-        }
+        await flushDraftToLearned(live, company);
       } catch (err) {
-        console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
+        if (!isExtensionDeadError(err)) {
+          console.warn("[ApplyTrack] learnAnswersOnSubmit failed", err);
+        }
       }
     }
 
@@ -1656,13 +2334,17 @@
       () => {
         if (autoBufferTimer) clearTimeout(autoBufferTimer);
         autoBufferTimer = setTimeout(() => {
-          let company = "";
           try {
-            company = typeof readJobCtx === "function" ? readJobCtx("applytrack:job:latest")?.company || "" : "";
+            let company = "";
+            try {
+              company = typeof readJobCtx === "function" ? readJobCtx("applytrack:job:latest")?.company || "" : "";
+            } catch {
+              /* ignore */
+            }
+            bufferAnswersFromPage(company);
           } catch {
             /* ignore */
           }
-          bufferAnswersFromPage(company);
         }, 300);
       },
       true,

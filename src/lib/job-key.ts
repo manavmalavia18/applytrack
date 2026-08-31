@@ -246,6 +246,13 @@ export function isJunkRole(role: string): boolean {
   const t = (role || "").trim();
   if (!t || t === "Unknown role") return true;
   if (/^you have applied for\b/i.test(t)) return true;
+  if (
+    /^(already have an account\??|set your cookie preferences|cookie preferences|icims careers portal|b careers|your browser is (not )?unsupported|browser is unsupported|position description|upload your resume|description)$/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
   return /^(enter your (information|info)|personal information|additional information|work experience|education|equal opportunity|review( your application)?|application( form)?|my profile|work summary|demographics|preferences|thank you|candidate|profile|privacy agreement|manual application|manual apply)$/i.test(
     t,
   );
@@ -257,6 +264,7 @@ export function cleanRoleTitle(role: string): string {
     .replace(/^you have applied for\s+/i, "")
     .replace(/^you('ve| have) successfully applied( for)?\s+/i, "")
     .replace(/^application (submitted|received) for\s+/i, "")
+    .replace(/^job application for\s+/i, "")
     .trim();
 }
 
@@ -302,7 +310,11 @@ export function detectSource(raw: string): string {
       return "teamtailor";
     }
     if (host.includes("smartrecruiters.com")) return "smartrecruiters";
-    return host.split(".")[0] || "web";
+    const label = host.split(".")[0] || "web";
+    if (/^(www|jobs|job|careers?|career\d*|recruiting|apply|talent|boards?)$/i.test(label)) {
+      return "web";
+    }
+    return label;
   } catch {
     return "manual";
   }

@@ -11,7 +11,14 @@ module.exports = {
     props: {
       pageProps: {
         apiData: {
-          jobPost: { name: "Backend Engineer", companyName: "Root Insurance" },
+          jobPost: {
+            name: "Backend Engineer",
+            companyName: "Root Insurance",
+            description: {
+              role: "<p>Build backend services in Node.js and ship reliable weekly releases to production.</p>",
+              company: "<p>Root Insurance is a car insurance company based in the United States.</p>",
+            },
+          },
         },
       },
     },
@@ -23,5 +30,7 @@ module.exports = {
     role: "Backend Engineer",
     source: "rippling",
     jobKey: "rippling:11111111-2222-3333-4444-555555555555",
+    captureConfidence: "high",
+    jobDescriptionIncludes: /Build backend services in Node\.js/,
   },
 };
