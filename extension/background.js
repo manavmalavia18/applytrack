@@ -101,6 +101,10 @@ async function api(path, { method = "GET", body } = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // Token missing/revoked/wrong — never surface raw "Unauthorized" in the panel.
+    if (res.status === 401 || data.error === "Unauthorized") {
+      return { ok: false, error: "auth_required" };
+    }
     return { ok: false, error: data.error || `HTTP ${res.status}` };
   }
   return { ok: true, ...data };

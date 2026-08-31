@@ -55,7 +55,11 @@ document.getElementById("mark").addEventListener("click", async () => {
       ? res.created
         ? "Marked sent."
         : "Already tracked — updated."
-      : res?.error || "Failed";
+      : res?.error === "auth_required" || res?.error === "Unauthorized"
+        ? "Sign in on the dashboard, mint a token under Extension token, paste it here, then try again."
+        : res?.error === "not_configured"
+          ? "Set API base + token first (Dashboard → Extension token)."
+          : res?.error || "Failed";
   } catch (e) {
     statusEl.textContent = e instanceof Error ? e.message : "Failed";
   }

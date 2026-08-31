@@ -1184,6 +1184,9 @@
       } else if (error === "not_configured") {
         statusClass = "error";
         statusText = "Not configured";
+      } else if (error === "auth_required" || error === "Unauthorized") {
+        statusClass = "error";
+        statusText = "Sign in needed";
       } else if (error) {
         statusClass = "error";
         statusText = "Error";
@@ -1265,6 +1268,9 @@
         html += `<p class="hint err">Extension reloaded — refresh this page (⌘R).</p>`;
       } else if (error === "not_configured") {
         html += `<p class="hint">Popup → set API base + token from the dashboard.</p>`;
+      } else if (error === "auth_required" || error === "Unauthorized") {
+        html += `<p class="hint err">Sign in on the ApplyTrack dashboard, then paste a fresh extension token in the popup and try again.</p>
+          <a class="act ghost" href="https://applytrack-rust.vercel.app/dashboard/settings" target="_blank">Open dashboard →</a>`;
       } else if (found && stale) {
         html += `<button class="act primary" id="newcycle">Start new application cycle</button>
           <a class="act ghost" href="https://applytrack-rust.vercel.app/dashboard" target="_blank">View previous →</a>`;
@@ -1275,7 +1281,13 @@
           <button class="act ghost" id="save">Save for later</button>
           <p class="hint">Captured details stay locked through Apply/Submit. Edit above only if capture missed.</p>`;
       }
-      if (error && error !== "not_configured" && error !== "reload_required") {
+      if (
+        error &&
+        error !== "not_configured" &&
+        error !== "reload_required" &&
+        error !== "auth_required" &&
+        error !== "Unauthorized"
+      ) {
         html += `<p class="hint err">${escapeHtml(error)}</p>`;
       }
       html += `</div>`;
