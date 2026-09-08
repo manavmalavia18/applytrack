@@ -180,8 +180,10 @@ const QUESTION_KIND_RULES = [
     re: /(salary|compensation|expected\s*(pay|salary)|pay\s*range|desired\s*(salary|compensation)|expect\s*to\s*make)/i,
   },
   {
+    // Availability / earliest start — not education "Start date month/year"
+    // and not relocation "date available to relocate".
     kind: "startDate",
-    re: /(start\s*date|available\s*to\s*start|notice\s*period|when\s*can\s*you\s*start|earliest\s*(start|availability))/i,
+    re: /(available\s*(to\s*start|start\s*date)|what\s*date\s*(are\s*you\s*)?available|date\s*(are\s*you\s*)?available\s*to\s*start|when\s*can\s*you\s*start|notice\s*period|earliest\s*(start|availability)|(?<!end\s)start\s*date(?!\s*(month|year)))/i,
   },
   {
     kind: "location",
@@ -243,12 +245,22 @@ function questionKind(label) {
 /**
  * Normalize free-text for HTML date-like inputs (`date`, `datetime-local`,
  * `month`, `time`, `week`). Returns the formatted value, or "" when the string
- * is not a date (locations, prose, etc.) so callers can skip the assignment.
+ * is not a date (locations, prose, year-only, etc.) so callers can skip the
+ * assignment. Never returns the original string unless it already matches the
+ * required format for `inputType`.
  */
 function normalizeDateInputValue(value, inputType) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const type = String(inputType || "date").toLowerCase();
+
+  // Availability prose / locations / free text — never assign to date inputs.
+  if (
+    /^(immediately|asap|as\s*soon\s*as\s*possible|tbd|n\/?a|none|available\s*now)$/i.test(raw) ||
+    /[a-zA-Z]{3,}/.test(raw)
+  ) {
+    return "";
+  }
 
   const isValidYmd = (y, m, d) => {
     if (m < 1 || m > 12 || d < 1 || d > 31) return false;
@@ -258,6 +270,11 @@ function normalizeDateInputValue(value, inputType) {
 
   const toYmd = (y, m, d) =>
     `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+  const toYm = (y, m) => {
+    if (m < 1 || m > 12 || y < 1000 || y > 9999) return "";
+    return `${y}-${String(m).padStart(2, "0")}`;
+  };
 
   if (type === "time") {
     const tm = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -270,15 +287,26 @@ function normalizeDateInputValue(value, inputType) {
     return ss != null ? `${base}:${String(ss).padStart(2, "0")}` : base;
   }
 
-  if (type === "week" && /^\d{4}-W\d{2}$/i.test(raw)) return raw.toUpperCase();
-  if (type === "month" && /^\d{4}-\d{2}$/.test(raw)) {
-    const y = Number(raw.slice(0, 4));
-    const m = Number(raw.slice(5, 7));
-    return m >= 1 && m <= 12 ? raw : "";
+  if (type === "week") {
+    return /^\d{4}-W\d{2}$/i.test(raw) ? raw.toUpperCase() : "";
   }
 
-  // ISO date (optionally with time)
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::\d{2})?)?/);
+  // Month-year: 2023-09, 09/2023, 9/2023 — only valid for type=month.
+  const isoMonth = raw.match(/^(\d{4})-(\d{1,2})$/);
+  const usMonth = raw.match(/^(\d{1,2})[/\-.](\d{4})$/);
+  if (type === "month") {
+    if (isoMonth) return toYm(Number(isoMonth[1]), Number(isoMonth[2]));
+    if (usMonth) return toYm(Number(usMonth[2]), Number(usMonth[1]));
+  } else if (isoMonth || usMonth) {
+    // Reject month-year for type=date / datetime-local (would invent a day).
+    return "";
+  }
+
+  // Year-only (e.g. "2026") — never invent month/day for type=date.
+  if (/^\d{4}$/.test(raw)) return "";
+
+  // ISO date (optionally with time) — require full yyyy-MM-dd
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::\d{2})?)?$/);
   if (iso) {
     const y = Number(iso[1]);
     const m = Number(iso[2]);

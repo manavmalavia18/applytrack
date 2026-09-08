@@ -263,8 +263,32 @@ test("normalizeDateInputValue: converts US dates and rejects non-dates", () => {
   assert.equal(normalizeDateInputValue("08/27/2026", "datetime-local"), "2026-08-27T00:00");
   assert.equal(normalizeDateInputValue("New York City, New York, United States", "date"), "");
   assert.equal(normalizeDateInputValue("as soon as possible", "date"), "");
+  assert.equal(normalizeDateInputValue("Immediately", "date"), "");
+  assert.equal(normalizeDateInputValue("ASAP", "date"), "");
+  assert.equal(normalizeDateInputValue("09/2023", "date"), "");
+  assert.equal(normalizeDateInputValue("9/2023", "date"), "");
+  assert.equal(normalizeDateInputValue("2026", "date"), "");
+  assert.equal(normalizeDateInputValue("2023-09", "date"), "");
+  assert.equal(normalizeDateInputValue("", "date"), "");
   assert.equal(normalizeDateInputValue("13/40/2026", "date"), "");
   assert.equal(normalizeDateInputValue("09:30", "time"), "09:30");
+  // type=month accepts month-year and converts US form
+  assert.equal(normalizeDateInputValue("09/2023", "month"), "2023-09");
+  assert.equal(normalizeDateInputValue("9/2023", "month"), "2023-09");
+  assert.equal(normalizeDateInputValue("2023-09", "month"), "2023-09");
+  assert.equal(normalizeDateInputValue("08/27/2026", "month"), "2026-08");
+  assert.equal(normalizeDateInputValue("Immediately", "month"), "");
+  assert.equal(normalizeDateInputValue("2026", "month"), "");
+});
+
+test("questionKind: availability vs education start-date chrome", () => {
+  assert.equal(questionKind("What date are you available to start?"), "startDate");
+  assert.equal(questionKind("Available start date"), "startDate");
+  assert.equal(questionKind("When can you start?"), "startDate");
+  assert.equal(questionKind("Start date"), "startDate");
+  assert.equal(questionKind("Start date month"), "");
+  assert.equal(questionKind("Start date year"), "");
+  assert.equal(questionKind("End date month"), "");
 });
 
 test("lookupLearnedAnswers: does not fuzzy-match location answers onto start-date questions", () => {

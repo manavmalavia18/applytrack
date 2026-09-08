@@ -283,10 +283,16 @@
     return String(el.value || "").trim();
   }
 
+  /** Prefer tagName + type attr — `instanceof` can fail across content-script realms. */
+  function htmlDateInputType(el) {
+    if (!el || String(el.tagName || "").toUpperCase() !== "INPUT") return "";
+    const t = String(el.type || el.getAttribute?.("type") || "").toLowerCase();
+    if (t === "date" || t === "datetime-local" || t === "month" || t === "time" || t === "week") return t;
+    return "";
+  }
+
   function isHtmlDateInput(el) {
-    if (!(el instanceof HTMLInputElement)) return false;
-    const t = el.type;
-    return t === "date" || t === "datetime-local" || t === "month" || t === "time" || t === "week";
+    return Boolean(htmlDateInputType(el));
   }
 
   function isFillableQuestion(label, el) {
@@ -421,10 +427,12 @@
       fillSelect(el, value);
       return true;
     }
-    // HTML date-like inputs require strict formats; never assign locations/prose.
-    if (el instanceof HTMLInputElement && isHtmlDateInput(el)) {
+    // HTML date-like inputs require strict formats. Reject BEFORE focus /
+    // execCommand / any assignment — Chrome warns if raw prose hits type=date.
+    const dateType = htmlDateInputType(el);
+    if (dateType) {
       const normalized =
-        typeof normalizeDateInputValue === "function" ? normalizeDateInputValue(value, el.type) : "";
+        typeof normalizeDateInputValue === "function" ? normalizeDateInputValue(value, dateType) : "";
       if (!normalized) return false;
       value = normalized;
     }
@@ -496,6 +504,14 @@
       if (field.kind === "radio" && Array.isArray(field.el)) {
         fillRadioGroup(field.el, answer);
         return true;
+      }
+      // Double-check date fields even if htmlDateInputType somehow misses.
+      if (field.kind === "date" || isHtmlDateInput(field.el)) {
+        const dateType = htmlDateInputType(field.el) || "date";
+        const normalized =
+          typeof normalizeDateInputValue === "function" ? normalizeDateInputValue(answer, dateType) : "";
+        if (!normalized) return false;
+        answer = normalized;
       }
       return nativeSetValue(field.el, answer) !== false;
     } catch {
@@ -585,6 +601,7 @@
     }
 
     async function run() {
+      if (!tabIsActive()) return 0;
       if (filling) return 0;
       if (!looksLikeApplicationForm(hooks?.getSource?.())) return 0;
       revealManualTextFields();
@@ -641,27 +658,74 @@
       }
     }
 
+    function tabIsActive() {
+      try {
+        return document.visibilityState === "visible";
+      } catch {
+        return true;
+      }
+    }
+
     const schedule = () => {
+      if (!tabIsActive()) return;
       clearTimeout(schedule._t);
       schedule._t = setTimeout(() => void run(), 300);
     };
 
-    // Let Simplify fill name/resume first, then fill leftover screening answers.
-    [1200, 2500, 5000, 9000].forEach((ms) => setTimeout(() => void run(), ms));
-    document.addEventListener("focusin", schedule, true);
-    try {
-      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
-    } catch {
-      /* ignore */
+    let observer = null;
+    let hrefTimer = null;
+    let delaysArmed = false;
+
+    function stopBackgroundWork() {
+      clearTimeout(schedule._t);
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      if (hrefTimer) {
+        clearInterval(hrefTimer);
+        hrefTimer = null;
+      }
+      document.removeEventListener("focusin", schedule, true);
     }
-    setInterval(() => {
-      if (location.href === lastHref) return;
-      lastHref = location.href;
-      fillTries.clear();
-      bankTried.clear();
-      cachedAnswers.clear();
+
+    function startForegroundWork() {
+      if (observer) return;
+      document.addEventListener("focusin", schedule, true);
+      try {
+        observer = new MutationObserver(schedule);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      } catch {
+        observer = null;
+      }
+      hrefTimer = setInterval(() => {
+        if (!tabIsActive()) return;
+        if (location.href === lastHref) return;
+        lastHref = location.href;
+        fillTries.clear();
+        bankTried.clear();
+        cachedAnswers.clear();
+        void run();
+      }, 700);
+      // Let Simplify fill name/resume first, then fill leftover screening answers.
+      // Only arm the delayed passes once per document — switching tabs shouldn't
+      // stack another 1.2s/2.5s/5s/9s burst.
+      if (!delaysArmed) {
+        delaysArmed = true;
+        [1200, 2500, 5000, 9000].forEach((ms) =>
+          setTimeout(() => {
+            if (tabIsActive()) void run();
+          }, ms),
+        );
+      }
       void run();
-    }, 700);
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (tabIsActive()) startForegroundWork();
+      else stopBackgroundWork();
+    });
+    if (tabIsActive()) startForegroundWork();
 
     hooks.run = run;
   }
